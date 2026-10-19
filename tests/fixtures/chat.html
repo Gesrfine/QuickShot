@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>QuickShot 测试聊天</title>
+<style>body{font:16px/1.6 system-ui;margin:50px auto;max-width:760px;background:#f6f7fc;color:#25263b}textarea,[contenteditable]{display:block;box-sizing:border-box;width:100%;min-height:120px;padding:18px;margin:15px 0;border:1px solid #c9cde1;border-radius:10px;background:white}button{padding:10px 20px}.attachments{display:flex;gap:10px}.attachments img{max-width:160px;max-height:100px}#other{margin:15px;padding:10px}</style>
+</head><body><h1>快投 · 粘贴测试页</h1><p>支持图片 Ctrl+V；不会提交消息。用于检查绑定、草稿保留与附件出现。</p>
+<textarea id="chat" placeholder="聊天输入框">保留这段草稿</textarea>
+<div id="rich" contenteditable="true" role="textbox" aria-label="富文本聊天"><span>富文本草稿</span></div>
+<input id="other" placeholder="其他输入框"><button id="send">手动发送（计数）</button>
+<p id="count">已发送 0 次</p><div class="attachments" id="attachments"></div>
+<script>let sent=0;document.getElementById('send').onclick=()=>{document.getElementById('count').textContent=`已发送 ${++sent} 次`};
+for(const element of [document.getElementById('chat'),document.getElementById('rich')])element.addEventListener('paste',event=>{const files=[...(event.clipboardData?.files||[])].filter(file=>file.type.startsWith('image/'));if(files.length){event.preventDefault();for(const file of files){const image=document.createElement('img');image.src=URL.createObjectURL(file);image.onload=()=>URL.revokeObjectURL(image.src);document.getElementById('attachments').append(image)}}});</script>
+</body></html>

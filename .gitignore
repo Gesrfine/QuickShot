@@ -1,0 +1,8 @@
+.tools/
+artifacts/
+**/bin/
+**/obj/
+node_modules/
+*.user
+*.log
+

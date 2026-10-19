@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>QuickShot</AssemblyName>
+    <Version>1.3.6</Version>
+    <Product>快投 QuickShot</Product>
+    <Description>FastStone 截图快捷投递到 Edge</Description>
+    <!-- Keep WinForms and COM intact. Only filter unused UI translations; English is the built-in fallback. -->
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../QuickShot.Core/QuickShot.Core.csproj" />
+    <Content Include="../../docs/使用说明.html" Link="使用说明.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+</Project>
+

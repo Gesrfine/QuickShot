@@ -1,0 +1,9 @@
+<Project>
+  <!-- Plain net10.0-windows uses the Windows 7.0 targeting baseline. Supplying
+       its display identity avoids searching user-installed Windows SDK folders
+       just to format a label; framework references still come from this SDK. -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <TargetPlatformMoniker>Windows,Version=7.0</TargetPlatformMoniker>
+    <TargetPlatformDisplayName>Windows 7.0</TargetPlatformDisplayName>
+  </PropertyGroup>
+</Project>
