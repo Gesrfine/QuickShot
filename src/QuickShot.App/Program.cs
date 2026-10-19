@@ -11,7 +11,7 @@ internal static class Program
 {
     private static readonly string UserSid = ReadUserSid();
     private static string ReadUserSid() { using var identity = WindowsIdentity.GetCurrent(); return identity.User!.Value; }
-    internal static string PipeName => "QuickShot." + UserSid
+    internal static string PipeName => "ClipboardSender." + UserSid
         + (Environment.GetEnvironmentVariable("QUICKSHOT_INSTANCE_ID") is { Length: > 0 } instance ? "." + instance : "");
 
     [STAThread]
@@ -22,20 +22,18 @@ internal static class Program
         return RunDesktop(args);
     }
 
-    // Keep native messaging independent of desktop types during Main's JIT compilation.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int RunDesktop(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        if (args.Contains("--install-ui")) { Application.Run(new InstallationForm()); return 0; }
-        if (args.Length is 2 or 3 && args[0] is "--render-preview" or "--render-hint-preview" or "--render-installer-preview")
+        if (args.Length is 2 or 3 && args[0] is "--render-preview" or "--render-hint-preview")
         {
-            using Form preview = args[0] switch { "--render-hint-preview" => new HintForm(), "--render-installer-preview" => new InstallationForm(preview: true), _ => new DashboardForm(preview: true) };
+            using Form preview = args[0] == "--render-hint-preview" ? new HintForm() : new DashboardForm(preview: true);
             preview.Opacity = 0; preview.ShowInTaskbar = false;
             if (preview is DashboardForm dashboard) dashboard.RefreshState(true,
                 [new TargetBinding("preview-c", "C", "DeepSeek 工作聊天", "https://chat.deepseek.com/"),
                  new TargetBinding("preview-d", "Ctrl+Alt+D", "另一个聊天", "https://example.com/chat")],
-                "截图后 10 秒内按目标快捷键投递。已有草稿会保留，消息由你手动发送。");
+                "复制图片后 10 秒内按目标快捷键投递。已有草稿会保留，消息由你手动发送。");
             if (preview is HintForm hint)
             {
                 var count = args.Length == 3 && int.TryParse(args[2], out var requested) ? Math.Clamp(requested, 1, 26) : 4;
@@ -65,7 +63,6 @@ internal static class NativeBridge
 {
     internal static async Task<int> RunAsync(string[] args)
     {
-        // The browser always supplies its extension origin. --native-host is for the smoke test only.
         var origin = args.FirstOrDefault(a => a.StartsWith("chrome-extension://", StringComparison.Ordinal));
         if (origin != null && origin != $"chrome-extension://{Protocol.ExtensionId}/") return 2;
         try
@@ -84,11 +81,9 @@ internal static class NativeBridge
             try { await pipe.ConnectAsync(400); }
             catch (TimeoutException)
             {
-                // Launch is permitted only by the extension's explicit Start button.
-                // Opening Edge or a background reconnect must never start the tray application.
                 if (hello["intent"]?.GetValue<string>() != "launch")
                 {
-                    await Protocol.WriteAsync(output, new JsonObject { ["type"] = "appStopped", ["message"] = "快投尚未运行。请手动打开程序，或点击“启动快投”。" }, CancellationToken.None);
+                    await Protocol.WriteAsync(output, new JsonObject { ["type"] = "appStopped", ["message"] = "剪切板快捷发送尚未运行。请手动打开程序，或点击“启动剪切板快捷发送”。" }, CancellationToken.None);
                     return 0;
                 }
                 var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };

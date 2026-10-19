@@ -17,7 +17,7 @@ const extensionPath = path.join(output, 'extension-' + process.pid);
 await cp(path.join(root, 'extension'), extensionPath, { recursive: true });
 // Never contact the user's registered native host from this isolated test profile.
 const sharedPath = path.join(extensionPath, 'shared.mjs');
-await writeFile(sharedPath, (await readFile(sharedPath, 'utf8')).replace("'com.quickshot.edge'", "'com.quickshot.test.p" + process.pid + "'"));
+await writeFile(sharedPath, (await readFile(sharedPath, 'utf8')).replace("'com.clipboardsender.edge'", "'com.quickshot.test.p" + process.pid + "'"));
 const extensionId = (await readFile(path.join(root, 'extension-id.txt'), 'utf8')).trim();
 const edge = spawn(edgePath, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', '--user-data-dir=' + profile, '--load-extension=' + extensionPath, '--disable-extensions-except=' + extensionPath, 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
 let stderr = ''; edge.stderr.on('data', chunk => { stderr += chunk; });

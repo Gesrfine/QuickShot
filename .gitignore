@@ -5,4 +5,6 @@ artifacts/
 node_modules/
 *.user
 *.log
+data/
+native-host.json
 

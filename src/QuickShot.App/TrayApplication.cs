@@ -15,8 +15,10 @@ internal sealed class TrayApplication : ApplicationContext
     private readonly PipeServer _server = new();
     private readonly NotifyIcon _tray;
     private readonly Icon _icon = DesktopUi.CreateIcon();
-    private readonly HintForm _hint = new();
-    private readonly StatusNoticeForm _notice = new();
+    private HintForm? _hint;
+    private StatusNoticeForm? _notice;
+    private HintForm Hint => _hint ??= new();
+    private StatusNoticeForm Notice => _notice ??= new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 100 };
     private AppSettings _settings = AppSettings.Load();
     private DashboardForm? _dashboard;
@@ -28,8 +30,9 @@ internal sealed class TrayApplication : ApplicationContext
     private bool _peerReady;
     private string? _profileId;
     private Delivery? _delivery;
-    private string _status = "首次使用：运行 QuickShot.exe，在 Edge 加载 extension 文件夹，然后绑定聊天输入框。";
+    private string _status = "首次使用：运行 ClipboardSender.exe，在 Edge 加载 extension 文件夹，然后绑定聊天输入框。";
     private bool _paused, _disposed;
+    private uint _lastClipboardSequence;
     private string CacheFile => Path.Combine(LocalLog.DataDirectory, "targets.json");
 
     private sealed class Delivery(TargetBinding target, uint sequence)
@@ -47,28 +50,30 @@ internal sealed class TrayApplication : ApplicationContext
 
     internal TrayApplication(string? registrationError = null)
     {
-        _status = registrationError ?? "打开 Edge 快投扩展可连接本程序。便携模式也支持直接运行，无需复制到固定目录。";
+        _status = registrationError ?? "复制任意图片，10 秒内按目标快捷键即可投递。首次使用请先在 Edge 扩展中绑定目标。";
         _ = _dispatcher.Handle;
+        _lastClipboardSequence = NativeMethods.GetClipboardSequenceNumber();
+        _gate.Initialize(_lastClipboardSequence);
         LoadCache();
-        _keyboard = new KeyboardMonitor { CaptureShortcut = AppSettings.ParseCaptureShortcut(_settings.CaptureShortcut) };
-        _keyboard.CaptureStarted = () =>
-        {
-            if (_paused || _delivery != null || _dashboard?.RecordingCaptureShortcut == true) return;
-            _gate.CaptureStarted(NativeMethods.GetClipboardSequenceNumber(), DateTimeOffset.UtcNow);
-            _hint.Hide(); _notice.Hide(); UpdateActivityTimer();
-        };
+        _keyboard = new KeyboardMonitor();
         _keyboard.KeyInput = ConsumeKey;
         _mouse = new MouseMonitor { Clicked = () => { if (_gate.Phase == CapturePhase.Armed) CancelForOtherInput(); } };
         _clipboard.Changed += ClipboardChanged;
         var menu = new ContextMenuStrip();
-        menu.Items.Add("打开快投", null, (_, _) => ShowDashboard());
+        menu.Items.Add("打开剪切板快捷发送", null, (_, _) => ShowDashboard());
         menu.Items.Add("管理接收目标", null, (_, _) => DashboardForm.OpenManager());
         var pause = new ToolStripMenuItem("暂停快捷投递") { CheckOnClick = true };
-        pause.CheckedChanged += (_, _) => { _paused = pause.Checked; _gate.Cancel(); _hint.Hide(); CancelDelivery(false); };
+        pause.CheckedChanged += (_, _) =>
+        {
+            _paused = pause.Checked;
+            _lastClipboardSequence = NativeMethods.GetClipboardSequenceNumber();
+            _gate.Initialize(_lastClipboardSequence);
+            _hint?.Hide(); _notice?.Hide(); CancelDelivery(false);
+        };
         menu.Items.Add(pause); menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("移除快投连接并退出", null, (_, _) => RemoveConnection());
+        menu.Items.Add("解除浏览器连接并退出", null, (_, _) => RemoveConnection());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
-        _tray = new NotifyIcon { Text = "快投 QuickShot · FastStone → Edge", Icon = _icon, ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Text = "剪切板快捷发送 · 图片 → Edge", Icon = _icon, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowDashboard();
         _server.Message += (peer, message) => Post(() => Receive(peer, message));
         _server.Disconnected += peer => Post(() =>
@@ -76,7 +81,7 @@ internal sealed class TrayApplication : ApplicationContext
             if (_peer?.Id != peer.Id) return;
             _peer = null;
             _peerReady = false;
-            if (_delivery != null) Fail("Edge 连接已断开，图片仍在剪贴板。请重新截图后重试。");
+            if (_delivery != null) Fail("Edge 连接已断开，图片仍在剪贴板。请重新复制图片后重试。");
             RefreshDashboard();
         });
         _server.Start();
@@ -94,7 +99,7 @@ internal sealed class TrayApplication : ApplicationContext
     private void CancelForOtherInput()
     {
         if (_delivery != null) return;
-        _gate.Cancel(); _hint.Hide();
+        _gate.Cancel(); _hint?.Hide();
         UpdateActivityTimer();
     }
 
@@ -111,7 +116,7 @@ internal sealed class TrayApplication : ApplicationContext
         var target = _bindings.FirstOrDefault(t => _shortcuts.TryGetValue(t.Key, out var shortcut) && shortcut.Matches(stroke.VirtualKey, stroke.Modifiers));
         if (target == null || !_gate.TryConsume(NativeMethods.GetClipboardSequenceNumber(), DateTimeOffset.UtcNow)) { UpdateActivityTimer(); return false; }
         var sequence = _gate.ImageSequence;
-        _hint.Hide();
+        _hint?.Hide();
         var delivery = new Delivery(target, sequence); _delivery = delivery; UpdateActivityTimer();
         Post(() => StartDelivery(delivery));
         return true;
@@ -119,27 +124,47 @@ internal sealed class TrayApplication : ApplicationContext
 
     private void ClipboardChanged()
     {
-        if (_paused || (_gate.Phase == CapturePhase.Idle && _delivery == null)) return;
-        var now = DateTimeOffset.UtcNow;
-        _gate.Expire(now);
         var sequence = NativeMethods.GetClipboardSequenceNumber();
-        if (_delivery != null && _delivery.Phase != "pasting" && sequence != _delivery.Sequence)
-            Fail("剪贴板已变化，本次投递停止。请重新截图。");
-        var containsImage = _gate.Phase == CapturePhase.WaitingForImage && sequence != _gate.ImageSequence && NativeMethods.ClipboardHasImage;
-        var fromFastStone = containsImage ? NativeMethods.ClipboardFromFastStone() : null;
-        if (_gate.ClipboardChanged(sequence, containsImage, fromFastStone, now))
+        if (sequence == _lastClipboardSequence) return;
+        ProcessClipboard(sequence, !_paused && _delivery == null && NativeMethods.ClipboardHasImage);
+    }
+
+    private void ProcessClipboard(uint sequence, bool containsImage)
+    {
+        if (sequence == _lastClipboardSequence) return;
+        _lastClipboardSequence = sequence;
+        if (_paused) { _gate.Initialize(sequence); return; }
+        if (_delivery != null)
+        {
+            if (_delivery.Phase != "pasting" && sequence != _delivery.Sequence)
+                Fail("剪贴板已变化，本次投递停止。请重新复制图片。");
+            _gate.Initialize(sequence);
+            return;
+        }
+        var now = DateTimeOffset.UtcNow;
+        if (_gate.ClipboardChanged(sequence, containsImage, now))
         {
             if (_bindings.Count == 0) { _gate.Cancel(); Notify("请先在 Edge 扩展中绑定一个接收目标。"); }
-            else { _keyboard.MarkScreenshotReady(); _notice.Hide(); RefreshHint(); }
+            else
+            {
+                _notice?.Hide();
+                try { _keyboard.MarkImageReady(); }
+                catch (System.ComponentModel.Win32Exception error)
+                {
+                    LocalLog.Write("keyboard-hook", error); _gate.Cancel();
+                    Notify("无法监听投递快捷键，请重启程序后重试。");
+                }
+                RefreshHint();
+            }
         }
-        if (_gate.Phase != CapturePhase.Armed) _hint.Hide();
+        if (_gate.Phase != CapturePhase.Armed) _hint?.Hide();
         UpdateActivityTimer();
     }
 
     private void StartDelivery(Delivery delivery)
     {
         if (_delivery != delivery) return;
-        if (NativeMethods.GetClipboardSequenceNumber() != delivery.Sequence || !NativeMethods.ClipboardHasImage) { Fail("剪贴板已变化，请重新截图。"); return; }
+        if (NativeMethods.GetClipboardSequenceNumber() != delivery.Sequence || !NativeMethods.ClipboardHasImage) { Fail("剪贴板已变化，请重新复制图片。"); return; }
         _status = $"正在准备 {delivery.Target.Name}…"; RefreshDashboard();
         if (_peer != null && _peerReady) Prepare();
         else
@@ -169,21 +194,19 @@ internal sealed class TrayApplication : ApplicationContext
                 if (!Guid.TryParse(profile, out _)) return;
                 if (_peer != null && _profileId != profile)
                 {
-                    _ = peer.SendAsync(new JsonObject { ["type"] = "rejected", ["message"] = "已有另一个 Edge 用户配置连接，请先关闭另一个配置中的快投扩展。" }); return;
+                    _ = peer.SendAsync(new JsonObject { ["type"] = "rejected", ["message"] = "已有另一个 Edge 用户配置连接，请先关闭另一个配置中的剪切板快捷发送扩展。" }); return;
                 }
                 if (_peer?.Id != peer.Id) _peer?.Dispose();
                 _peer = peer; _profileId = profile;
                 _peerReady = false;
                 UpdateBindings(message["bindings"] as JsonArray);
-                Send(new JsonObject { ["type"] = "helloAck", ["version"] = Protocol.Version, ["captureShortcut"] = _settings.CaptureShortcut });
-                _status = "Edge 已连接。截图后按绑定键即可投递。"; RefreshDashboard(); return;
+                Send(new JsonObject { ["type"] = "helloAck", ["version"] = Protocol.Version });
+                _status = "Edge 已连接。复制图片后按绑定键即可投递。"; RefreshDashboard(); return;
             }
             if (_peer?.Id != peer.Id) return;
             if (type == "ready")
             {
                 _peerReady = true;
-                // Settings may have changed while the extension was acknowledging hello.
-                Send(new JsonObject { ["type"] = "captureShortcut", ["captureShortcut"] = _settings.CaptureShortcut });
                 Prepare(); RefreshDashboard(); return;
             }
             if (type == "bindings") { UpdateBindings(message["bindings"] as JsonArray); RefreshDashboard(); return; }
@@ -221,14 +244,11 @@ internal sealed class TrayApplication : ApplicationContext
         if (_delivery is not { Phase: "verifying" } delivery) return;
         if (!_keyboard.AllDeliveryKeysReleased)
         {
-            // A committed delivery survives subsequent typing. Wait out held
-            // shortcut/modifier keys rather than risk changing Ctrl+V's chord.
-            // The old permission is discarded; Tick requests fresh validation.
             delivery.Phase = "waitingForKeys";
             return;
         }
         if (NativeMethods.GetClipboardSequenceNumber() != delivery.Sequence || !NativeMethods.ClipboardHasImage)
-        { Fail("剪贴板发生变化，本次未粘贴。请重新截图。"); return; }
+        { Fail("剪贴板发生变化，本次未粘贴。请重新复制图片。"); return; }
         if (!NativeMethods.IsExpectedEdgeForeground(delivery.Token))
         { Fail("目标 Edge 标签页没有获得焦点，本次未粘贴。"); return; }
         delivery.Phase = "pasting";
@@ -282,10 +302,6 @@ internal sealed class TrayApplication : ApplicationContext
             }
             else if (_delivery.Phase == "waitingForActivation" && _keyboard.AllDeliveryKeysReleased)
             {
-                // Edge's own window API can restore app windows when Windows
-                // refuses foreground activation from a background tray process.
-                // verifyFocus still checks the exact tab/editor, and pasteNow
-                // requires this window's unique marker to be foreground.
                 if (NativeMethods.TryActivateEdgeWindow(_delivery.Token) || DateTimeOffset.UtcNow >= _delivery.ActivationDeadline)
                 {
                     _delivery.Phase = "verifying";
@@ -295,7 +311,7 @@ internal sealed class TrayApplication : ApplicationContext
             else if (_delivery.Phase == "focusingContent")
             {
                 if (DateTimeOffset.UtcNow >= _delivery.ActivationDeadline) { Fail("Edge 网页内容未获得键盘焦点，本次未粘贴。请检查浏览器对话框或重新选择输入框。"); return; }
-                if (_delivery.FocusTask?.IsFaulted == true) { LocalLog.Write("focus", _delivery.FocusTask.Exception!); Fail("聚焦网页失败，本次未粘贴。请重新截图。"); return; }
+                if (_delivery.FocusTask?.IsFaulted == true) { LocalLog.Write("focus", _delivery.FocusTask.Exception!); Fail("聚焦网页失败，本次未粘贴。请重新复制图片。"); return; }
                 if (_delivery.FocusTask is { IsCompletedSuccessfully: true } task)
                 {
                     if (task.Result)
@@ -313,8 +329,9 @@ internal sealed class TrayApplication : ApplicationContext
     private void UpdateActivityTimer()
     {
         if (_disposed) return;
-        if (_gate.Phase != CapturePhase.Armed) _hint.Hide();
+        if (_gate.Phase != CapturePhase.Armed) _hint?.Hide();
         _keyboard.KeyInputEnabled = !_paused && _gate.Phase != CapturePhase.Idle && _delivery == null;
+        _keyboard.Enabled = _gate.Phase == CapturePhase.Armed || _delivery != null;
         var monitorMouse = _gate.Phase == CapturePhase.Armed && _delivery == null;
         if (_mouse.Enabled != monitorMouse)
         {
@@ -324,8 +341,8 @@ internal sealed class TrayApplication : ApplicationContext
                 LocalLog.Write("mouse-hook", e);
                 if (monitorMouse)
                 {
-                    _gate.Cancel(); _hint.Hide(); CancelDelivery(false);
-                    Notify("无法监听鼠标取消操作，本次投递已停止。请重新启动快投后重试。");
+                    _gate.Cancel(); _hint?.Hide(); CancelDelivery(false);
+                    Notify("无法监听鼠标取消操作，本次投递已停止。请重新启动剪切板快捷发送后重试。");
                     return;
                 }
             }
@@ -376,36 +393,25 @@ internal sealed class TrayApplication : ApplicationContext
     private void Notify(string message)
     {
         _status = message;
-        if (_settings.ShowNotifications) _notice.ShowMessage(message);
-        else _notice.Hide();
+        if (_settings.ShowNotifications) Notice.ShowMessage(message);
+        else _notice?.Hide();
         RefreshDashboard();
     }
     private void RefreshHint()
     {
         if (_settings.ShowNotifications && _gate.Phase == CapturePhase.Armed)
-            _hint.UpdateHint(_bindings, Math.Max(1, (int)Math.Ceiling((_gate.Deadline - DateTimeOffset.UtcNow).TotalSeconds)));
-        else _hint.Hide();
+            Hint.UpdateHint(_bindings, Math.Max(1, (int)Math.Ceiling((_gate.Deadline - DateTimeOffset.UtcNow).TotalSeconds)));
+        else _hint?.Hide();
     }
 
     private string? TryApplySettings(AppSettings settings)
     {
         try
         {
-            var shortcut = AppSettings.ParseCaptureShortcut(settings.CaptureShortcut);
-            var captureChanged = _settings.CaptureShortcut != shortcut.Text;
-            if (captureChanged && _bindings.Any(target => target.Key == shortcut.Text))
-                return "截图快捷键与已绑定的投递快捷键重复，请使用其他组合。";
-            settings = settings with { CaptureShortcut = shortcut.Text };
             settings.Save();
             _settings = settings;
-            _keyboard.CaptureShortcut = shortcut;
-            if (captureChanged && _delivery == null) _gate.Cancel();
-            if (!_settings.ShowNotifications) { _hint.Hide(); _notice.Hide(); }
-            if (captureChanged && _peerReady)
-                Send(new JsonObject { ["type"] = "captureShortcut", ["captureShortcut"] = shortcut.Text });
-            _status = captureChanged
-                ? $"截图快捷键已保存为 {shortcut.Text}。请在 FastStone 中设置相同的快捷键。"
-                : settings.ShowNotifications ? "已开启右下角提示。" : "已隐藏右下角提示，快捷投递照常运行。结果可在此窗口查看。";
+            if (!_settings.ShowNotifications) { _hint?.Hide(); _notice?.Hide(); }
+            _status = settings.ShowNotifications ? "已开启右下角提示。" : "已隐藏右下角提示，快捷投递照常运行。结果可在此窗口查看。";
             RefreshHint(); UpdateActivityTimer(); RefreshDashboard();
             return null;
         }
@@ -428,6 +434,7 @@ internal sealed class TrayApplication : ApplicationContext
             _dashboard = new DashboardForm();
             _dashboard.RemoveRequested += RemoveConnection;
             _dashboard.SettingsRequested = TryApplySettings;
+            _dashboard.FormClosed += (_, _) => _dashboard = null;
         }
         RefreshDashboard(); _dashboard.Show(); _dashboard.Activate();
     }
@@ -437,7 +444,7 @@ internal sealed class TrayApplication : ApplicationContext
         if (_disposed) return;
         var wasPaused = _paused;
         _paused = true;
-        _gate.Cancel(); _hint.Hide(); _notice.Hide(); CancelDelivery(false);
+        _gate.Cancel(); _hint?.Hide(); _notice?.Hide(); CancelDelivery(false);
         try
         {
             AppPaths.UnregisterConnection();
@@ -447,11 +454,11 @@ internal sealed class TrayApplication : ApplicationContext
             LocalLog.Write("unregister", e);
             _paused = wasPaused;
             UpdateActivityTimer();
-            Notify("移除快投连接失败，程序仍可继续使用。请检查目录和注册表权限后重试。" + Environment.NewLine + e.Message);
+            Notify("移除剪切板快捷发送连接失败，程序仍可继续使用。请检查目录和注册表权限后重试。" + Environment.NewLine + e.Message);
             return;
         }
-        MessageBox.Show("已移除当前程序的浏览器连接及对应的开机自启。\n\n请到 Edge 扩展页移除快投扩展，再删除本程序文件夹。设置和绑定数据已保留。",
-            "快投 QuickShot", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show("已移除当前程序的浏览器连接及对应的开机自启。\n\n请到 Edge 扩展页移除剪切板快捷发送扩展，再删除本程序文件夹。设置和绑定数据已保留。",
+            "剪切板快捷发送", MessageBoxButtons.OK, MessageBoxIcon.Information);
         ExitThread();
     }
 
@@ -460,7 +467,7 @@ internal sealed class TrayApplication : ApplicationContext
         if (disposing && !_disposed)
         {
             _gate.Cancel(); CancelDelivery(false); _disposed = true; _timer.Stop(); _timer.Dispose(); _keyboard.Dispose(); _mouse.Dispose(); _clipboard.Dispose();
-            _server.Dispose(); _tray.Visible = false; _tray.Dispose(); _icon.Dispose(); _hint.Dispose(); _notice.Dispose(); _dashboard?.Dispose(); _dispatcher.Dispose();
+            _server.Dispose(); _tray.Visible = false; _tray.Dispose(); _icon.Dispose(); _hint?.Dispose(); _notice?.Dispose(); _dashboard?.Dispose(); _dispatcher.Dispose();
         }
         base.Dispose(disposing);
     }

@@ -1,9 +1,7 @@
 import { HOST_NAME, PROTOCOL_VERSION, bindingKey, permissionPattern, restoredTab, targetSummary, validateBindings, webUrl } from './shared.mjs';
 
 let bindings = [], profileId, nativePort = null, nativeReady = false, pendingPick = null, delivery = null;
-const defaultCaptureShortcut = 'Alt+Shift+D';
-let captureShortcut = defaultCaptureShortcut;
-let captureUpdateQueue = Promise.resolve(), connectionQueue = Promise.resolve();
+let connectionQueue = Promise.resolve();
 const connectionTabs = new Set();
 let mutationQueue = Promise.resolve();
 const queue = task => { const result = mutationQueue.then(task); mutationQueue = result.catch(() => {}); return result; };
@@ -16,21 +14,17 @@ const initialized = (async () => {
   try {
     bindings = validateBindings(saved.bindings || []);
     if (saved.schemaVersion !== 2) {
-      // v1 stored the last conversation URL. Retain a backup before using homepage defaults.
       if (bindings.length) await chrome.storage.local.set({ v1BindingsBackup: bindings });
       bindings = bindings.map(binding => ({ ...binding, url: binding.origin + '/' }));
       await chrome.storage.local.set({ bindings, schemaVersion: 2 });
     }
   } catch { invalid = true; bindings = []; }
-  const sessionState = await chrome.storage.session.get(['pendingPick', 'captureShortcut']);
+  const sessionState = await chrome.storage.session.get('pendingPick');
   pendingPick = sessionState.pendingPick || null;
-  try { captureShortcut = bindingKey(sessionState.captureShortcut || defaultCaptureShortcut); }
-  catch { captureShortcut = defaultCaptureShortcut; }
   await chrome.storage.local.set({ profileId });
   await syncContentScripts();
-  // Remove the v1 retry alarm. Browser startup never connects to or launches the application.
   await chrome.alarms.clear('quickshot-reconnect');
-  await setConnection(invalid ? 'error' : 'stopped', invalid ? '绑定数据无效，原数据已保留。请重新绑定接收目标。' : '尚未连接。手动运行快投，或点击“启动 / 连接快投”。');
+  await setConnection(invalid ? 'error' : 'stopped', invalid ? '绑定数据无效，原数据已保留。请重新绑定接收目标。' : '尚未连接。手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。');
 })();
 
 function setConnection(state, message, sourcePort = null) {
@@ -44,30 +38,8 @@ function setConnection(state, message, sourcePort = null) {
   connectionQueue = result.catch(() => {});
   return result;
 }
-function updateCaptureShortcut(value, sourcePort) {
-  const result = captureUpdateQueue.then(async () => {
-    if (nativePort !== sourcePort) return false;
-    const next = bindingKey(value ?? defaultCaptureShortcut);
-    await chrome.storage.session.set({ captureShortcut: next });
-    if (nativePort !== sourcePort) {
-      // An already dispatched storage write cannot be cancelled. Restore the
-      // last accepted value before a replacement port can persist its setting.
-      await chrome.storage.session.set({ captureShortcut });
-      return false;
-    }
-    captureShortcut = next;
-    return true;
-  });
-  captureUpdateQueue = result.catch(() => {});
-  return result;
-}
-function deliveryKey(value) {
-  const key = bindingKey(value);
-  if (key === captureShortcut) throw new Error(`${captureShortcut} 当前用于 FastStone 截图，请选择其他投递快捷键。`);
-  return key;
-}
 function nativeSend(message) {
-  if (!nativePort) throw new Error('托盘程序未连接。请手动运行快投，或点击“启动 / 连接快投”。');
+  if (!nativePort) throw new Error('托盘程序未连接。请手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。');
   nativePort.postMessage(message);
 }
 async function syncContentScripts() {
@@ -97,8 +69,6 @@ function isConnectionPage(tab) {
   return !tab.incognito && tab.url === url && (!tab.pendingUrl || tab.pendingUrl === url);
 }
 async function closeConnectionTabs(targetTabId, requestId = null) {
-  // Never close bootstrap pages at handshake time: one may be Edge's last tab.
-  // A live receiving tab must exist before removing any still-owned helper page.
   for (const id of [...connectionTabs]) {
     if (requestId) assertCurrent(requestId);
     if (id === targetTabId) { connectionTabs.delete(id); continue; }
@@ -108,7 +78,7 @@ async function closeConnectionTabs(targetTabId, requestId = null) {
     try { target = await chrome.tabs.get(targetTabId); } catch { return; }
     if (!target || target.incognito || connectionTabs.has(targetTabId)) return;
     if (requestId) assertCurrent(requestId);
-    try { await chrome.tabs.remove(id); connectionTabs.delete(id); } catch { /* Closed while querying. */ }
+    try { await chrome.tabs.remove(id); connectionTabs.delete(id); } catch {}
   }
 }
 async function connectNative(intent = 'connect', connectionTabId = null) {
@@ -121,13 +91,11 @@ async function connectNative(intent = 'connect', connectionTabId = null) {
   await setConnection('connecting', '正在连接 Windows 托盘程序…');
   if (nativePort) return;
   const port = chrome.runtime.connectNative(HOST_NAME); nativePort = port;
-  let settingsReady = Promise.resolve();
+  let handshakeReady = Promise.resolve();
   port.onMessage.addListener(message => {
     if (nativePort !== port) return;
-    // Keep settings messages in native wire order, and let later operations
-    // observe them. Long preparations remain interruptible by cancel messages.
-    const result = settingsReady.then(() => handleNative(message, port));
-    if (['helloAck', 'captureShortcut'].includes(message.type)) settingsReady = result.catch(() => {});
+    const result = handshakeReady.then(() => handleNative(message, port));
+    if (message.type === 'helloAck') handshakeReady = result.catch(() => {});
     result.catch(error => {
       if (nativePort !== port) return;
       if (message.requestId) failDelivery(message.requestId, error.message).catch(() => {});
@@ -139,7 +107,7 @@ async function connectNative(intent = 'connect', connectionTabId = null) {
     if (nativePort !== port) return;
     nativePort = null; nativeReady = false;
     cancelDelivery().catch(() => {});
-    setConnection('disconnected', '连接已断开。请手动启动快投或重新连接。详情：' + reason).catch(() => {});
+    setConnection('disconnected', '连接已断开。请手动启动剪切板快捷发送或重新连接。详情：' + reason).catch(() => {});
   });
   port.postMessage({ type: 'hello', version: PROTOCOL_VERSION, intent, profileId, bindings: targetSummary(bindings) });
 }
@@ -149,7 +117,7 @@ async function sendContent(tabId, message) { return chrome.tabs.sendMessage(tabI
 async function cancelDelivery() {
   const current = delivery; delivery = null;
   if (current?.tabId != null) {
-    try { await sendContent(current.tabId, { type: 'cancel', requestId: current.requestId }); } catch { /* Navigation/closed tab. */ }
+    try { await sendContent(current.tabId, { type: 'cancel', requestId: current.requestId }); } catch {}
   }
 }
 async function failDelivery(requestId, message) {
@@ -159,19 +127,16 @@ async function failDelivery(requestId, message) {
 function assertCurrent(requestId) { if (delivery?.requestId !== requestId) throw new Error('本次投递已取消。'); }
 
 async function targetTabs(origin) {
-  // Edge's installed apps and --app windows can be reported as app or popup.
-  // Never infer a target from its window title or silently ignore another app chat.
   const tabs = await chrome.tabs.query({ url: permissionPattern(origin) });
   const windows = new Map();
   await Promise.all([...new Set(tabs.filter(tab => !tab.incognito).map(tab => tab.windowId))].map(async id => {
-    try { windows.set(id, await chrome.windows.get(id)); } catch { /* Closed while querying. */ }
+    try { windows.set(id, await chrome.windows.get(id)); } catch {}
   }));
   return tabs.filter(tab => !tab.incognito && !windows.get(tab.windowId)?.incognito && ['normal', 'popup', 'app'].includes(windows.get(tab.windowId)?.type));
 }
 async function resolveTab(binding, requestId = null) {
   const candidates = await targetTabs(binding.origin);
   if (requestId) assertCurrent(requestId);
-  // Count all pages of the target site, across conversations and windows; remembered IDs never bypass ambiguity.
   const existing = restoredTab(candidates, binding.origin);
   if (existing) return existing;
   for (const id of [...connectionTabs]) {
@@ -179,25 +144,22 @@ async function resolveTab(binding, requestId = null) {
     try { tab = await chrome.tabs.get(id); } catch { connectionTabs.delete(id); continue; }
     if (!isConnectionPage(tab)) { connectionTabs.delete(id); continue; }
     if (requestId) assertCurrent(requestId);
-    // Claim before navigation so later helper cleanup can never delete the chat.
     connectionTabs.delete(id);
     try { return { ...await chrome.tabs.update(id, { url: binding.url, active: true }), quickshotConnectionPage: true }; }
     catch (error) {
-      try { if (isConnectionPage(await chrome.tabs.get(id))) connectionTabs.add(id); } catch { /* Closed. */ }
+      try { if (isConnectionPage(await chrome.tabs.get(id))) connectionTabs.add(id); } catch {}
       throw error;
     }
   }
   if (requestId) assertCurrent(requestId);
   try { return await chrome.tabs.create({ url: binding.url, active: true }); }
   catch (error) {
-    // Startup boost can leave the extension connected with no browser window.
-    // In that state tabs.create has no current window to receive a new tab.
     const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
     if (requestId) assertCurrent(requestId);
     if (windows.length) throw error;
     const opened = await chrome.windows.create({ url: binding.url, type: 'normal', focused: false });
     const tab = opened.tabs?.[0];
-    if (!tab) throw new Error('Edge 未能创建接收页面，请重新截图。');
+    if (!tab) throw new Error('Edge 未能创建接收页面，请重新复制图片。');
     return tab;
   }
 }
@@ -205,7 +167,7 @@ async function assertUniqueTarget(bindingId, tabId) {
   const binding = bindings.find(item => item.id === bindingId);
   if (!binding) throw new Error('接收目标已删除。');
   const candidate = restoredTab(await targetTabs(binding.origin), binding.origin);
-  if (candidate?.id !== tabId) throw new Error('目标网站的标签页已变化，请重新截图。');
+  if (candidate?.id !== tabId) throw new Error('目标网站的标签页已变化，请重新复制图片。');
 }
 function assertSameSite(tab, binding, allowBootstrap = false) {
   for (const url of [tab.url, tab.pendingUrl].filter(Boolean)) {
@@ -233,8 +195,6 @@ async function prepareDocument(current, binding, deadline) {
       const result = await sendContent(tabId, { type: 'prepare', requestId, locator: binding.locator });
       assertCurrent(requestId);
       if (result?.ok) {
-        // Edge publishes document.title asynchronously. The marker must belong to
-        // the final document, including a same-URL reload or late SPA navigation.
         const markerDeadline = Math.min(deadline, Date.now() + 1500);
         while (Date.now() < markerDeadline) {
           const marked = await chrome.tabs.get(tabId); assertCurrent(requestId);
@@ -265,16 +225,10 @@ async function handleNative(message, sourcePort) {
   if (nativePort !== sourcePort) return;
   if (message.type === 'helloAck') {
     if (message.version !== PROTOCOL_VERSION) throw new Error('程序与扩展版本不一致，请更新程序并重新加载扩展。');
-    if (!await updateCaptureShortcut(message.captureShortcut, sourcePort)) return;
     await setConnection('connected', 'Windows 托盘程序已连接。', sourcePort);
     if (nativePort !== sourcePort) return;
     nativeReady = true;
     nativeSend({ type: 'ready' }); return;
-  }
-  if (message.type === 'captureShortcut') {
-    if (!nativeReady) throw new Error('托盘程序尚未完成连接。');
-    await updateCaptureShortcut(message.captureShortcut, sourcePort);
-    return;
   }
   if (message.type === 'rejected' || message.type === 'appStopped') {
     const old = nativePort; nativePort = null; nativeReady = false;
@@ -288,7 +242,7 @@ async function handleNative(message, sourcePort) {
     await cancelDelivery();
     const binding = bindings.find(item => item.id === message.bindingId);
     if (!binding) throw new Error('接收目标不存在，请重新绑定。');
-    deliveryKey(binding.key);
+    bindingKey(binding.key);
     delivery = { requestId: message.requestId, bindingId: binding.id, tabId: null, phase: 'preparing', navigation: 0, needsPrepare: true, deadline: Date.now() + 30000 };
     const requestId = message.requestId;
     if (!await chrome.permissions.contains({ origins: [permissionPattern(binding.origin)] })) throw new Error('该网站访问权限已被撤销，请重新绑定。');
@@ -298,7 +252,6 @@ async function handleNative(message, sourcePort) {
     await assertUniqueTarget(binding.id, tab.id);
     await closeConnectionTabs(tab.id, requestId);
     assertCurrent(requestId); delivery.phase = 'ready';
-    // The app activates this exact window only after all shortcut keys are released.
     nativeSend({ type: 'focusPrepared', requestId }); return;
   }
   if (delivery?.requestId !== message.requestId) return;
@@ -314,13 +267,10 @@ async function handleNative(message, sourcePort) {
         assertSameSite(tab, binding);
         await assertUniqueTarget(current.bindingId, current.tabId); assertCurrent(message.requestId);
         if (documentChanged(current, tab)) {
-          // Before the first paste authorization it is safe to prepare a replacement
-          // same-site document. After authorization, never risk replaying a paste.
           if (!canRecover) throw new Error('目标页面已导航，本次投递停止。');
           await prepareDocument(current, binding, deadline);
           continue;
         }
-        // A foreground HWND alone does not guarantee WebContents keyboard focus.
         const currentWindow = await chrome.windows.get(tab.windowId); assertCurrent(message.requestId);
         await chrome.windows.update(tab.windowId, currentWindow.state === 'minimized' ? { focused: true, state: 'normal' } : { focused: true }); assertCurrent(message.requestId);
         await chrome.tabs.update(tab.id, { active: true }); assertCurrent(message.requestId);
@@ -367,7 +317,6 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
       catch (error) { failDelivery(current.requestId, error.message).catch(() => {}); }
     }
   }
-  // Navigating to a new conversation never overwrites the configured default URL.
 });
 chrome.tabs.onRemoved.addListener(tabId => {
   connectionTabs.delete(tabId);
@@ -387,7 +336,7 @@ async function handleUi(message, sender) {
       if (sender.id !== chrome.runtime.id || !pick || pick.expires < Date.now() || message.pickId !== pick.id || sender.tab?.id !== pick.tabId || sender.frameId !== 0) throw new Error('本次输入框选择已失效，请重新绑定。');
       const tab = await chrome.tabs.get(pick.tabId);
       if (webUrl(tab.url).origin !== pick.origin) throw new Error('选择期间网页已离开原网站。');
-      deliveryKey(pick.key);
+      bindingKey(pick.key);
       if (bindings.some(binding => binding.key === pick.key && binding.id !== pick.editId)) throw new Error('此快捷键已有接收目标。');
       const next = bindings.filter(binding => binding.id !== pick.editId);
       next.push({ id: pick.editId || crypto.randomUUID(), key: pick.key, name: pick.name, url: pick.url, origin: pick.origin, locator: message.locator });
@@ -398,7 +347,7 @@ async function handleUi(message, sender) {
   }
   if (!sender.url?.startsWith(chrome.runtime.getURL('')) || sender.id !== chrome.runtime.id) throw new Error('无效的扩展请求。');
   switch (message.type) {
-    case 'getState': return { ok: true, bindings, captureShortcut, ...(await chrome.storage.session.get('connection')) };
+    case 'getState': return { ok: true, bindings, ...(await chrome.storage.session.get('connection')) };
     case 'connect': {
       const temporary = sender.url === chrome.runtime.getURL('connect.html') ? sender.tab?.id : null;
       await connectNative('connect', temporary); return { ok: true };
@@ -430,7 +379,7 @@ async function handleUi(message, sender) {
       return { ok: true };
     }
     case 'beginBinding': return queue(async () => {
-      const key = deliveryKey(message.key), name = String(message.name || '').trim();
+      const key = bindingKey(message.key), name = String(message.name || '').trim();
       if (!name || name.length > 80) throw new Error('请填写 1–80 字的目标名称。');
       const editId = message.editId || null;
       if (editId && !bindings.some(binding => binding.id === editId)) throw new Error('原接收目标已不存在。');
@@ -449,9 +398,9 @@ async function handleUi(message, sender) {
     case 'editBinding': return queue(async () => {
       const target = bindings.find(binding => binding.id === message.id);
       if (!target) throw new Error('接收目标不存在。');
-      const key = deliveryKey(message.key), name = String(message.name || '').trim(), url = defaultUrl(message.url || target.url, target.origin);
+      const key = bindingKey(message.key), name = String(message.name || '').trim(), url = defaultUrl(message.url || target.url, target.origin);
       if (bindings.some(binding => binding.id !== target.id && binding.key === key)) throw new Error('此快捷键已有接收目标。');
-      if (delivery?.bindingId === target.id) await failDelivery(delivery.requestId, '接收目标已修改，请重新截图。');
+      if (delivery?.bindingId === target.id) await failDelivery(delivery.requestId, '接收目标已修改，请重新复制图片。');
       await saveBindings(bindings.map(binding => binding.id === target.id ? { ...binding, key, name, url } : binding));
       return { ok: true };
     });

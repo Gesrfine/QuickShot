@@ -1,5 +1,5 @@
-export const HOST_NAME = 'com.quickshot.edge';
-export const PROTOCOL_VERSION = 2;
+export const HOST_NAME = 'com.clipboardsender.edge';
+export const PROTOCOL_VERSION = 3;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function webUrl(value) {
@@ -35,7 +35,6 @@ export function keyFromEvent(event) {
 }
 export function permissionPattern(origin) {
   const url = webUrl(origin);
-  // Extension match patterns do not distinguish TCP ports. Target checks still use the exact origin.
   return `${url.protocol}//${url.hostname}/*`;
 }
 export function validateBindings(bindings) {
@@ -59,8 +58,6 @@ export function targetSummary(bindings) {
 export function restoredTab(candidates, origin) {
   const matches = candidates.filter(tab => {
     if (tab.incognito) return false;
-    // A newly opened app/tab can still have about:blank as its current URL.
-    // Count its pending target too so a second delivery never opens a duplicate.
     return [tab.url, tab.pendingUrl].some(value => {
       try { return webUrl(value).origin === origin; } catch { return false; }
     });

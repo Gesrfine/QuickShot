@@ -9,9 +9,9 @@ namespace QuickShot.Unregister.Tests;
 
 internal static class Program
 {
-    private const string HostName = "com.quickshot.edge";
+    private const string HostName = "com.clipboardsender.edge";
     private const string Origin = "chrome-extension://kgjahiekhopambbcmenggajjghlmbhel/";
-    private const string RealHost = @"Software\Microsoft\Edge\NativeMessagingHosts\com.quickshot.edge";
+    private const string RealHost = @"Software\Microsoft\Edge\NativeMessagingHosts\com.clipboardsender.edge";
     private const string RealRun = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const BindingFlags Static = BindingFlags.Static | BindingFlags.NonPublic;
     private static readonly Type Paths = Assembly.Load("QuickShot").GetType("QuickShot.App.AppPaths", true)!;
@@ -34,7 +34,7 @@ internal static class Program
         var oldRegistry = Environment.GetEnvironmentVariable("QUICKSHOT_TEST_REGISTRY_ROOT");
         var oldData = Environment.GetEnvironmentVariable("QUICKSHOT_DATA_DIR");
         var hostBefore = SnapshotRegistryValue(RealHost, "");
-        var runBefore = SnapshotRegistryValue(RealRun, "QuickShot");
+        var runBefore = SnapshotRegistryValue(RealRun, "ClipboardSender");
         if (Directory.Exists(fixture) || RegistryKeyExists(registry))
             throw new InvalidOperationException("Isolated test namespace already exists.");
         RequireExactFixture(fixture, artifacts, name);
@@ -57,7 +57,7 @@ internal static class Program
             var testProject = Path.Combine(repo, "tests", "QuickShot.Unregister.Tests");
             if (!IsWithin(package, testProject) && !IsWithin(package, fixture))
                 throw new InvalidOperationException("AppPaths resolved outside this test project's output and fixture directories.");
-            if (!SamePath(Path.GetDirectoryName(manifest), package) || Path.GetFileName(manifest) != "native-host.json")
+            if (!SamePath(Path.GetDirectoryName(manifest), data) || Path.GetFileName(manifest) != "native-host.json")
                 throw new InvalidOperationException("Unexpected native-host manifest path.");
             if (File.Exists(manifest))
                 throw new InvalidOperationException("A native-host.json already exists at the test location; refusing to overwrite or delete it.");
@@ -72,12 +72,12 @@ internal static class Program
             using (var host = Registry.CurrentUser.CreateSubKey(hostKey)) host.SetValue("", manifest);
             using (var run = Registry.CurrentUser.CreateSubKey(runKey))
             {
-                run.SetValue("QuickShot", startup);
+                run.SetValue("ClipboardSender", startup);
                 run.SetValue("OtherApplication", "leave-this-test-value");
             }
             InvokeUnregister();
             Check(!RegistryKeyExists(hostKey), "matching native-host registration is removed");
-            Check(!SnapshotRegistryValue(runKey, "QuickShot").ValueExists, "matching QuickShot startup is removed");
+            Check(!SnapshotRegistryValue(runKey, "ClipboardSender").ValueExists, "matching QuickShot startup is removed");
             Check(ReadRegistryValue(runKey, "OtherApplication") as string == "leave-this-test-value", "unrelated startup value is preserved");
             Check(!File.Exists(manifest), "matching local native manifest is removed");
             Check(Directory.Exists(package) && File.Exists(Environment.ProcessPath), "unregister retains its program directory and executable");
@@ -89,13 +89,13 @@ internal static class Program
             Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
             File.WriteAllText(foreign, "unrelated native-host test file");
             using (var host = Registry.CurrentUser.CreateSubKey(hostKey)) host.SetValue("", foreign);
-            using (var run = Registry.CurrentUser.CreateSubKey(runKey)) run.SetValue("QuickShot", '"' + foreignExecutable + "\" --background");
+            using (var run = Registry.CurrentUser.CreateSubKey(runKey)) run.SetValue("ClipboardSender", '"' + foreignExecutable + "\" --background");
             var foreignHostBefore = SnapshotRegistryValue(hostKey, "");
-            var foreignRunBefore = SnapshotRegistryValue(runKey, "QuickShot");
+            var foreignRunBefore = SnapshotRegistryValue(runKey, "ClipboardSender");
             expectedManifestContents = WriteNewManifest(manifest, executable);
             InvokeUnregister();
             Check(SnapshotRegistryValue(hostKey, "") == foreignHostBefore, "registration for another package is preserved");
-            Check(SnapshotRegistryValue(runKey, "QuickShot") == foreignRunBefore, "startup for another executable is preserved");
+            Check(SnapshotRegistryValue(runKey, "ClipboardSender") == foreignRunBefore, "startup for another executable is preserved");
             Check(File.ReadAllText(foreign) == "unrelated native-host test file", "another package's native manifest is preserved");
             // Whether or not the active registration belongs to this copy, a safe local
             // cleanup may remove only a manifest whose contents identify this executable.
@@ -105,16 +105,16 @@ internal static class Program
             expectedManifestContents = WriteNewManifest(manifest, foreignExecutable);
             InvokeUnregister();
             Check(File.Exists(manifest) && File.ReadAllText(manifest) == expectedManifestContents, "local manifest pointing at another executable is preserved");
-            Check(SnapshotRegistryValue(hostKey, "") == foreignHostBefore && SnapshotRegistryValue(runKey, "QuickShot") == foreignRunBefore,
+            Check(SnapshotRegistryValue(hostKey, "") == foreignHostBefore && SnapshotRegistryValue(runKey, "ClipboardSender") == foreignRunBefore,
                 "mismatched manifest does not affect unrelated connection and startup");
             Check(File.Exists(keep) && SHA256.HashData(File.ReadAllBytes(keep)).SequenceEqual(dataBefore), "mismatched-manifest cleanup preserves user data");
             DeleteOwnedManifest(manifest, expectedManifestContents);
             expectedManifestContents = null;
 
             InvokeUnregister();
-            Check(!File.Exists(manifest) && SnapshotRegistryValue(hostKey, "") == foreignHostBefore && SnapshotRegistryValue(runKey, "QuickShot") == foreignRunBefore,
+            Check(!File.Exists(manifest) && SnapshotRegistryValue(hostKey, "") == foreignHostBefore && SnapshotRegistryValue(runKey, "ClipboardSender") == foreignRunBefore,
                 "repeating unregister with no local manifest is safe");
-            Check(SnapshotRegistryValue(RealHost, "") == hostBefore && SnapshotRegistryValue(RealRun, "QuickShot") == runBefore,
+            Check(SnapshotRegistryValue(RealHost, "") == hostBefore && SnapshotRegistryValue(RealRun, "ClipboardSender") == runBefore,
                 "real user's native-host and login-startup registrations remain unchanged");
             Console.WriteLine($"Root-layout and unregister checks passed: {_checks}.");
         }
@@ -145,7 +145,7 @@ internal static class Program
                 Environment.SetEnvironmentVariable("QUICKSHOT_TEST_REGISTRY_ROOT", oldRegistry);
                 Environment.SetEnvironmentVariable("QUICKSHOT_DATA_DIR", oldData);
             }
-            if (SnapshotRegistryValue(RealHost, "") != hostBefore || SnapshotRegistryValue(RealRun, "QuickShot") != runBefore)
+            if (SnapshotRegistryValue(RealHost, "") != hostBefore || SnapshotRegistryValue(RealRun, "ClipboardSender") != runBefore)
                 throw new InvalidOperationException("Real user registration changed during isolated tests.");
         }
     }
@@ -167,8 +167,8 @@ internal static class Program
         File.Copy(Path.Combine(repo, "extension", "manifest.json"), Path.Combine(legacy, "extension", "manifest.json"));
         Directory.CreateDirectory(legacyApp);
         File.WriteAllText(Path.Combine(legacyApp, "QuickShot.exe"), "NOT EXECUTABLE");
-        Check(SamePath(Resolve(legacyApp), legacy), "legacy app subdirectory resolves the original package root");
-        Check(SamePath(Resolve(legacyApp + Path.DirectorySeparatorChar), legacy), "legacy layout accepts a trailing separator");
+        Check(SamePath(Resolve(legacyApp), legacyApp), "a directory named app is its own portable root");
+        Check(SamePath(Resolve(legacyApp + Path.DirectorySeparatorChar), legacyApp), "a standalone app directory accepts a trailing separator");
 
         var namedApp = Path.Combine(fixture, "app");
         Directory.CreateDirectory(Path.Combine(namedApp, "extension"));

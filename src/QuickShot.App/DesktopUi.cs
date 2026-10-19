@@ -2,7 +2,6 @@ using Microsoft.Win32;
 using QuickShot.Core;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
-using Shortcut = QuickShot.Core.Shortcut;
 
 namespace QuickShot.App;
 
@@ -11,7 +10,7 @@ internal sealed class ClipboardWindow : NativeWindow, IDisposable
     internal event Action? Changed;
     internal ClipboardWindow()
     {
-        CreateHandle(new CreateParams { Caption = "QuickShot clipboard listener", Parent = new nint(-3) });
+        CreateHandle(new CreateParams { Caption = "Clipboard Sender listener", Parent = new nint(-3) });
         if (!NativeMethods.AddClipboardFormatListener(Handle)) throw new System.ComponentModel.Win32Exception();
     }
     protected override void WndProc(ref Message message)
@@ -58,12 +57,13 @@ internal static class DesktopUi
         return info;
     }
 
-    internal static bool StartupEnabled => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run", "QuickShot", null) is string { Length: > 0 };
+    private static string StartupCommand => $"\"{Environment.ProcessPath}\" --background";
+    internal static bool StartupEnabled => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run", "ClipboardSender", null) as string == StartupCommand;
     internal static void SetStartup(bool enabled)
     {
         using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
-        if (enabled) key.SetValue("QuickShot", $"\"{Environment.ProcessPath}\" --background");
-        else key.DeleteValue("QuickShot", false);
+        if (enabled) key.SetValue("ClipboardSender", StartupCommand);
+        else if (key.GetValue("ClipboardSender") as string == StartupCommand) key.DeleteValue("ClipboardSender", false);
     }
 }
 
@@ -86,7 +86,7 @@ internal sealed class HintForm : Form
         AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Color.FromArgb(28, 30, 44); DoubleBuffered = true; Text = "快投 · 当前截图";
+        BackColor = Color.FromArgb(28, 30, 44); DoubleBuffered = true; Text = "剪切板快捷发送 · 当前截图";
     }
     internal void UpdateHint(IReadOnlyList<TargetBinding> bindings, int seconds)
     {
@@ -144,7 +144,7 @@ internal sealed class HintForm : Form
         using var shape = new GraphicsPath();
         shape.AddRoundedRectangle(new RectangleF(0, 0, Width, Height), new SizeF(14 * scale, 14 * scale));
         var previous = Region; Region = new Region(shape); previous?.Dispose();
-        AccessibleName = "截图已就绪";
+        AccessibleName = "图片已就绪";
         AccessibleDescription = string.Join("；", _bindings.Select(binding => $"{binding.Key} 投递到 {binding.Name}")) + "。其他按键或点击鼠标取消。";
     }
 
@@ -162,7 +162,7 @@ internal sealed class HintForm : Form
         void Text(string value, Font font, Color color, Rectangle rectangle) => TextRenderer.DrawText(g, value, font, rectangle, color, textFlags);
         var scale = DeviceDpi / 96f;
         int Px(int value) => (int)(value * scale);
-        Text("截图就绪 · 按键投递", _titleFont, Color.White, new Rectangle(_padding, Px(10), Width - Px(76), Px(24)));
+        Text("图片就绪 · 按键投递", _titleFont, Color.White, new Rectangle(_padding, Px(10), Width - Px(76), Px(24)));
         Text(_seconds + "s", _titleFont, Color.FromArgb(185, 173, 255), new Rectangle(Width - Px(58), Px(10), Px(42), Px(24)));
         var columnWidth = Width / _columns;
         for (var i = 0; i < _bindings.Count; i++)
@@ -191,7 +191,6 @@ internal sealed class HintForm : Form
     }
 }
 
-/// <summary>A compact status notice; Windows' system toast size cannot be controlled by the application.</summary>
 internal sealed class StatusNoticeForm : Form
 {
     private readonly System.Windows.Forms.Timer _dismiss = new() { Interval = 5500 };
@@ -210,14 +209,14 @@ internal sealed class StatusNoticeForm : Form
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.FromArgb(28, 30, 44); DoubleBuffered = true;
-        Text = "快投 · 状态提示"; AccessibleRole = AccessibleRole.Alert;
+        Text = "剪切板快捷发送 · 状态提示"; AccessibleRole = AccessibleRole.Alert;
         _dismiss.Tick += (_, _) => Hide();
     }
 
     internal void ShowMessage(string message)
     {
         _dismiss.Stop();
-        _message = message; AccessibleName = "快投状态"; AccessibleDescription = message;
+        _message = message; AccessibleName = "剪切板快捷发送状态"; AccessibleDescription = message;
         _area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Reflow(); PlaceInWorkingArea();
         if (!Visible) Show();
@@ -255,7 +254,7 @@ internal sealed class StatusNoticeForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        TextRenderer.DrawText(e.Graphics, "快投", _titleFont, new Rectangle(_padding, _padding / 2, Width - 2 * _padding, _header - _padding / 2),
+        TextRenderer.DrawText(e.Graphics, "剪切板快捷发送", _titleFont, new Rectangle(_padding, _padding / 2, Width - 2 * _padding, _header - _padding / 2),
             Color.FromArgb(185, 173, 255), TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter);
         TextRenderer.DrawText(e.Graphics, _message, _messageFont, new Rectangle(_padding, _header, Width - 2 * _padding, Height - _header - _padding),
             Color.White, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
@@ -271,58 +270,11 @@ internal sealed class StatusNoticeForm : Form
     }
 }
 
-internal sealed class CaptureShortcutBox : TextBox
-{
-    internal event Action<string>? InvalidShortcut;
-
-    internal CaptureShortcutBox()
-    {
-        ReadOnly = true; ShortcutsEnabled = false;
-        BackColor = Color.White;
-        AccessibleName = "截图快捷键";
-        Text = "Alt+Shift+D";
-    }
-
-    internal void RecordKey(Keys keyData, bool windowsKey)
-    {
-        var key = keyData & Keys.KeyCode;
-        if (Shortcut.IsModifier((uint)key)) return;
-        var name = key switch
-        {
-            >= Keys.A and <= Keys.Z => key.ToString(),
-            >= Keys.D0 and <= Keys.D9 => ((int)key - (int)Keys.D0).ToString(),
-            Keys.Return => "Enter", Keys.Back => "Backspace",
-            Keys.Prior => "PageUp", Keys.Next => "PageDown",
-            Keys.Snapshot => "PrintScreen", _ => key.ToString()
-        };
-        var modifiers = (keyData.HasFlag(Keys.Control) ? "Ctrl+" : "")
-            + (keyData.HasFlag(Keys.Alt) ? "Alt+" : "")
-            + (keyData.HasFlag(Keys.Shift) ? "Shift+" : "")
-            + (windowsKey ? "Win+" : "");
-        try { Text = AppSettings.ParseCaptureShortcut(modifiers + name).Text; InvalidShortcut?.Invoke(""); }
-        catch (FormatException error) { InvalidShortcut?.Invoke(error.Message); }
-    }
-
-    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
-    {
-        if ((keyData & ~Keys.Shift) == Keys.Tab) return base.ProcessCmdKey(ref msg, keyData);
-        RecordKey(keyData, NativeMethods.IsDown(0x5B) || NativeMethods.IsDown(0x5C));
-        return true;
-    }
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        RecordKey(e.KeyData, NativeMethods.IsDown(0x5B) || NativeMethods.IsDown(0x5C));
-        e.SuppressKeyPress = true; e.Handled = true;
-    }
-}
-
 internal sealed class DashboardForm : Form
 {
     internal event Action? RemoveRequested;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal Func<AppSettings, string?>? SettingsRequested { get; set; }
-    internal bool RecordingCaptureShortcut => _captureShortcut.ContainsFocus;
     private readonly bool _preview;
     protected override bool ShowWithoutActivation => _preview;
     protected override CreateParams CreateParams { get { var p = base.CreateParams; if (_preview) p.ExStyle |= 0x08000000 | 0x80; return p; } }
@@ -330,8 +282,7 @@ internal sealed class DashboardForm : Form
     private readonly Label _status = new() { AutoSize = false, Height = 48, Dock = DockStyle.Fill, ForeColor = Color.FromArgb(95, 100, 116) };
     private readonly ListView _targets = new() { View = View.Details, FullRowSelect = true, BorderStyle = BorderStyle.FixedSingle, Dock = DockStyle.Fill, HeaderStyle = ColumnHeaderStyle.Nonclickable };
     private readonly Label _instructions = new() { AutoSize = true, ForeColor = Color.FromArgb(95, 100, 116) };
-    private readonly CheckBox _showNotifications = new() { Text = "显示右下角提示（截图倒计时及投递结果）", AutoSize = true, Checked = true };
-    private readonly CaptureShortcutBox _captureShortcut = new() { Width = 210 };
+    private readonly CheckBox _showNotifications = new() { Text = "显示右下角提示（图片倒计时及投递结果）", AutoSize = true, Checked = true };
     private AppSettings _settings = new();
     private bool _refreshingSettings;
     private string _signature = "";
@@ -339,15 +290,15 @@ internal sealed class DashboardForm : Form
     {
         _preview = preview;
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "快投 QuickShot"; Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(248, 249, 253);
-        ClientSize = new Size(760, 650); MinimumSize = new Size(700, 620); StartPosition = FormStartPosition.CenterScreen;
+        Text = "剪切板快捷发送"; Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(248, 249, 253);
+        ClientSize = new Size(720, 540); MinimumSize = new Size(680, 510); StartPosition = FormStartPosition.CenterScreen;
         using var icon = DesktopUi.CreateIcon(); Icon = (Icon)icon.Clone();
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 9 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-        layout.Controls.Add(new Label { Text = "快投 / QuickShot", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold), ForeColor = Color.FromArgb(28, 32, 48) });
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        layout.Controls.Add(new Label { Text = "剪切板快捷发送 2.0", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold), ForeColor = Color.FromArgb(28, 32, 48) });
         layout.Controls.Add(_instructions);
         layout.Controls.Add(_connection);
         _targets.Columns.Add("快捷键", 160); _targets.Columns.Add("接收目标", 170); _targets.Columns.Add("默认网址", 300);
@@ -355,7 +306,7 @@ internal sealed class DashboardForm : Form
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Padding = new Padding(0, 12, 0, 0) };
         var manage = new Button { Text = "打开 Edge 绑定管理", AutoSize = true, MinimumSize = new Size(190, 36), BackColor = DesktopUi.Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         manage.Click += (_, _) => OpenManager();
-        var remove = new Button { Text = "移除快投", AutoSize = true, MinimumSize = new Size(100, 36), FlatStyle = FlatStyle.Flat };
+        var remove = new Button { Text = "解除浏览器连接", AutoSize = true, MinimumSize = new Size(100, 36), FlatStyle = FlatStyle.Flat };
         remove.Click += (_, _) => RemoveRequested?.Invoke();
         buttons.Controls.Add(manage); buttons.Controls.Add(remove); layout.Controls.Add(buttons);
         var startup = new CheckBox { Text = "登录 Windows 时启动（默认关闭）", AutoSize = true, Checked = DesktopUi.StartupEnabled };
@@ -370,14 +321,7 @@ internal sealed class DashboardForm : Form
             if (!_refreshingSettings) RequestSettings(_settings with { ShowNotifications = _showNotifications.Checked });
         };
         layout.Controls.Add(_showNotifications);
-        var captureRow = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Padding = new Padding(0, 4, 0, 4) };
-        captureRow.Controls.Add(new Label { Text = "截图快捷键：", AutoSize = true, Margin = new Padding(0, 5, 3, 0) });
-        captureRow.Controls.Add(_captureShortcut);
-        _captureShortcut.InvalidShortcut += message => _status.Text = message.Length == 0 ? "点击“保存快捷键”生效；请在 FastStone 中设置相同的快捷键。" : message;
-        var saveCapture = new Button { Text = "保存快捷键", AutoSize = true, FlatStyle = FlatStyle.Flat };
-        saveCapture.Click += (_, _) => RequestSettings(_settings with { CaptureShortcut = _captureShortcut.Text });
-        captureRow.Controls.Add(saveCapture);
-        layout.Controls.Add(captureRow); layout.Controls.Add(_status); Controls.Add(layout);
+        layout.Controls.Add(_status); Controls.Add(layout);
         RefreshSettings(_settings);
     }
 
@@ -387,21 +331,19 @@ internal sealed class DashboardForm : Form
         if (error == null) RefreshSettings(settings);
         else
         {
-            RefreshSettings(_settings); _captureShortcut.Text = _settings.CaptureShortcut;
+            RefreshSettings(_settings);
             _status.Text = error;
         }
     }
 
     internal void RefreshSettings(AppSettings settings)
     {
-        var changedShortcut = _settings.CaptureShortcut != settings.CaptureShortcut;
         _settings = settings;
         _refreshingSettings = true;
         try
         {
             _showNotifications.Checked = settings.ShowNotifications;
-            if (changedShortcut) _captureShortcut.Text = settings.CaptureShortcut;
-            _instructions.Text = $"{settings.CaptureShortcut} 截图 → 按目标快捷键 → 确认附件后手动发送\n10 秒内按目标键；仅在按下前，其他按键或鼠标点击取消。";
+            _instructions.Text = "复制图片 → 10 秒内按目标快捷键 → 确认附件后手动发送\n按目标键前，其他按键或鼠标点击取消；支持任意图片来源。";
         }
         finally { _refreshingSettings = false; }
     }
@@ -409,7 +351,7 @@ internal sealed class DashboardForm : Form
     internal static void OpenManager()
     {
         try { DesktopUi.OpenEdge($"chrome-extension://{Protocol.ExtensionId}/options.html"); }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { MessageBox.Show("无法打开 Edge，请先安装扩展。\n" + e.Message, "快投"); }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { MessageBox.Show("无法打开 Edge，请先安装扩展。\n" + e.Message, "剪切板快捷发送"); }
     }
 
     internal void RefreshState(bool connected, IReadOnlyList<TargetBinding> bindings, string status)
@@ -422,9 +364,4 @@ internal sealed class DashboardForm : Form
         foreach (var target in bindings) _targets.Items.Add(new ListViewItem([target.Key, target.Name, target.Url]));
     }
 
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
-        base.OnFormClosing(e);
-    }
 }

@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { mkdir, writeFile, stat, lstat, rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,8 +9,9 @@ import assert from 'node:assert/strict';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.join(root, 'artifacts');
-const executable = path.resolve(process.argv[2] || path.join(artifacts, 'staging/portable/QuickShot.exe'));
+const executable = path.resolve(process.argv[2] || path.join(artifacts, 'staging/ClipboardSender-2.0.0/ClipboardSender.exe'));
 const resultPath = path.resolve(process.argv[3] || path.join(artifacts, 'bridge-resources.json'));
+const protocolVersion = Number(process.argv[4] || 3);
 const fixtureName = `bridge-resource-smoke-${randomUUID().replaceAll('-', '')}`;
 const fixture = path.resolve(artifacts, fixtureName);
 assert(resultPath.startsWith(artifacts + path.sep) && path.extname(resultPath) === '.json', 'measurement result must be a workspace artifacts JSON file');
@@ -17,10 +19,15 @@ assert.equal(path.dirname(fixture), artifacts);
 assert.match(path.basename(fixture), /^bridge-resource-smoke-[a-f0-9]{32}$/);
 const file = await stat(executable);
 assert(file.isFile(), 'measured executable must be a file');
+const digest = createHash('sha256');
+for await (const chunk of createReadStream(executable)) digest.update(chunk);
+const executableSha256 = digest.digest('hex');
 await mkdir(fixture);
 
 const env = {
   ...process.env,
+  DOTNET_ROOT: path.join(root, '.tools/dotnet'),
+  DOTNET_ROOT_X64: path.join(root, '.tools/dotnet'),
   QUICKSHOT_DATA_DIR: fixture,
   QUICKSHOT_INSTANCE_ID: randomUUID(),
   QUICKSHOT_NO_REGISTER: '1',
@@ -66,14 +73,14 @@ try {
       }
     } catch (error) { bridgeError = error; }
   });
-  const hello = Buffer.from(JSON.stringify({ type: 'hello', version: 2, intent: 'connect', profileId: randomUUID(), bindings: [] }));
+  const hello = Buffer.from(JSON.stringify({ type: 'hello', version: protocolVersion, intent: 'connect', profileId: randomUUID(), bindings: [] }));
   const header = Buffer.alloc(4);
   header.writeUInt32LE(hello.length);
   bridge.stdin.write(Buffer.concat([header, hello]));
   for (let i = 0; i < 120 && !messages.length && !bridgeError && bridge.exitCode === null; i++) await pause(100);
   if (bridgeError) throw bridgeError;
   assert.equal(messages[0]?.type, 'helloAck', 'isolated bridge must complete the real native-stdio and named-pipe handshake');
-  assert.equal(messages[0]?.version, 2);
+  assert.equal(messages[0]?.version, protocolVersion);
   assert(Number.isSafeInteger(bridge.pid), 'bridge PID must come from this spawned process');
 
   // Observe only the two exact child PIDs. Do not force GC, alter working sets,
@@ -112,7 +119,9 @@ try {
   const result = {
     app: executable,
     executableBytes: file.size,
-    handshake: 'helloAck v2',
+    executableSha256,
+    measuredAt: new Date().toISOString(),
+    handshake: 'helloAck v' + protocolVersion,
     observationSeconds: samples.at(-1).elapsedSeconds - samples[0].elapsedSeconds,
     registrationDisabled: true,
     realProfileUsed: false,

@@ -3,7 +3,7 @@ import { recordShortcut } from './shortcut-input.mjs';
 const $ = id => document.getElementById(id);
 let currentTab = null;
 function showConnection(connection) {
-  $('connection').textContent = connection?.message || '请手动运行快投，或点击“启动 / 连接快投”。';
+  $('connection').textContent = connection?.message || '请手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。';
   $('connection').dataset.state = connection?.state || 'disconnected';
 }
 try {
@@ -28,7 +28,6 @@ $('bind-form').addEventListener('submit', async event => {
   event.preventDefault(); $('error').textContent = '';
   try {
     const origin = webUrl(currentTab.url).origin;
-    // Request persistent access only to this site, directly from this user gesture.
     const granted = await chrome.permissions.request({ origins: [permissionPattern(origin)] });
     if (!granted) throw new Error('绑定需要允许扩展访问当前网站。');
     $('bind').disabled = true;

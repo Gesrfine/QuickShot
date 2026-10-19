@@ -6,9 +6,9 @@ namespace QuickShot.Core;
 
 public static class Protocol
 {
-    public const int Version = 2;
+    public const int Version = 3;
     public const int MaxMessageBytes = 64 * 1024;
-    public const string HostName = "com.quickshot.edge";
+    public const string HostName = "com.clipboardsender.edge";
     public const string ExtensionId = "kgjahiekhopambbcmenggajjghlmbhel";
 
     public static async Task<JsonObject?> ReadAsync(Stream stream, CancellationToken cancellationToken)

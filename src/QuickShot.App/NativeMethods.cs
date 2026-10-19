@@ -16,7 +16,6 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] internal static extern nint GetModuleHandle(string? moduleName);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] internal static extern uint GetClipboardSequenceNumber();
-    [DllImport("user32.dll")] internal static extern nint GetClipboardOwner();
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsClipboardFormatAvailable(uint format);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern uint RegisterClipboardFormat(string name);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool AddClipboardFormatListener(nint window);
@@ -64,16 +63,6 @@ internal static class NativeMethods
     internal static bool HasModifiers => IsDown(VkControl) || IsDown(VkShift) || IsDown(VkAlt) || IsDown(0x5B) || IsDown(0x5C);
     private static readonly uint PngFormat = RegisterClipboardFormat("PNG");
     internal static bool ClipboardHasImage => IsClipboardFormatAvailable(2) || IsClipboardFormatAvailable(8) || IsClipboardFormatAvailable(17) || IsClipboardFormatAvailable(PngFormat);
-
-    internal static bool? ClipboardFromFastStone()
-    {
-        var owner = GetClipboardOwner();
-        if (owner == 0) return null;
-        GetWindowThreadProcessId(owner, out var id);
-        try { using var process = Process.GetProcessById((int)id); return process.ProcessName.Equals("FSCapture", StringComparison.OrdinalIgnoreCase); }
-        catch (ArgumentException) { return null; }
-        catch (System.ComponentModel.Win32Exception) { return null; }
-    }
 
     internal static bool IsExpectedEdgeForeground(string token)
     {
@@ -135,7 +124,6 @@ internal static class NativeMethods
         INPUT[] input = [Key(VkControl), Key(0x56), Key(0x56, true), Key(VkControl, true)];
         var sent = SendInput((uint)input.Length, input, Marshal.SizeOf<INPUT>());
         if (sent == input.Length) return true;
-        // Release synthetic modifiers if Windows accepted only part of the batch.
         INPUT[] release = [Key(0x56, true), Key(VkControl, true)];
         SendInput((uint)release.Length, release, Marshal.SizeOf<INPUT>());
         return false;

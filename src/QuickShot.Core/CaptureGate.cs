@@ -1,28 +1,27 @@
 namespace QuickShot.Core;
 
-public enum CapturePhase { Idle, WaitingForImage, Armed }
-
-/// <summary>Pure state machine: only a changed image after a capture shortcut can arm delivery.</summary>
+public enum CapturePhase { Idle, Armed }
 public sealed class CaptureGate
 {
     public static readonly TimeSpan ArmedDuration = TimeSpan.FromSeconds(10);
     public CapturePhase Phase { get; private set; }
     public uint ImageSequence { get; private set; }
     public DateTimeOffset Deadline { get; private set; }
+    private uint _lastSequence;
 
-    public void CaptureStarted(uint clipboardSequence, DateTimeOffset now)
+    public void Initialize(uint sequence)
     {
-        ImageSequence = clipboardSequence;
-        Phase = CapturePhase.WaitingForImage;
-        Deadline = now.AddMinutes(2);
+        _lastSequence = sequence;
+        Cancel();
     }
 
-    public bool ClipboardChanged(uint sequence, bool containsImage, bool? fromFastStone, DateTimeOffset now)
+    public bool ClipboardChanged(uint sequence, bool containsImage, DateTimeOffset now)
     {
         Expire(now);
-        if (Phase == CapturePhase.Armed && sequence != ImageSequence) Cancel();
-        if (Phase != CapturePhase.WaitingForImage || sequence == ImageSequence || !containsImage || fromFastStone == false)
-            return false;
+        if (sequence == _lastSequence) return false;
+        _lastSequence = sequence;
+        Cancel();
+        if (!containsImage) return false;
         ImageSequence = sequence;
         Phase = CapturePhase.Armed;
         Deadline = now.Add(ArmedDuration);
@@ -40,7 +39,7 @@ public sealed class CaptureGate
 
     public void Expire(DateTimeOffset now)
     {
-        if (Phase != CapturePhase.Idle && now >= Deadline) Cancel();
+        if (Phase == CapturePhase.Armed && now >= Deadline) Cancel();
     }
 
     public void Cancel() => Phase = CapturePhase.Idle;

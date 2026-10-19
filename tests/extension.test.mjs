@@ -6,7 +6,7 @@ import { webcrypto } from 'node:crypto';
 import * as shared from '../extension/shared.mjs';
 const binding = () => ({ id: '11111111-2222-4333-8444-555555555555', key: 'C', name: '测试聊天', url: 'https://chat.example.test/', origin: 'https://chat.example.test', locator: { selector: '#chat', tag: 'textarea' } });
 
-test('canonical shortcuts accept up to three keys independently from the configured capture shortcut', () => {
+test('canonical shortcuts accept up to three keys without capture-tool reservations', () => {
   for (const [input, expected] of [[' c ', 'C'], ['shift+control+x', 'Ctrl+Shift+X'], ['alt+ctrl+F12', 'Ctrl+Alt+F12'], ['1', '1'], ['Win+Left', 'Win+Left'], ['Alt+Shift+D', 'Alt+Shift+D'], ['printscreen', 'PrintScreen']]) assert.equal(shared.bindingKey(input), expected);
   for (const key of ['', 'CC', '中', 'Ctrl', 'Ctrl+Ctrl+C', 'C+D', 'Ctrl+Alt+Shift+C', 'Esc']) assert.throws(() => shared.bindingKey(key));
   assert.equal(shared.keyFromEvent({ code: 'KeyC', ctrlKey: true, altKey: true, key: 'Process', isComposing: true }), 'Ctrl+Alt+C');
@@ -95,7 +95,7 @@ async function harness(savedBindings = [binding()], tabOverrides = [], schemaVer
   await wait(() => session.connection);
   const h = { chrome, tabs, outgoing, content, local, session, ports, trace, ui, wait, tabUpdated, tabRemoved, windowTypes,
     get port() { return ports.at(-1); }, setFocus: value => { contentFocus = value; }, setWindowFocus: value => { windowFocus = value; } };
-  h.connect = async (intent = 'connect', captureShortcut) => { await ui({ type: intent === 'launch' ? 'reconnect' : 'connect' }); h.port.onMessage.fire({ type: 'helloAck', version: 2, ...(captureShortcut === undefined ? {} : { captureShortcut }) }); await wait(() => outgoing.some(message => message.type === 'ready')); };
+  h.connect = async (intent = 'connect') => { await ui({ type: intent === 'launch' ? 'reconnect' : 'connect' }); h.port.onMessage.fire({ type: 'helloAck', version: 3 }); await wait(() => outgoing.some(message => message.type === 'ready')); };
   return h;
 }
 const requestId = '1234567890abcdef1234567890abcdef';
@@ -112,7 +112,7 @@ test('worker startup, browser startup and state reads never start a native host'
 });
 test('passive connect does not request launch, stopped hosts do not retry', async () => {
   const h = await harness(); await h.ui({ type: 'connect' });
-  assert.equal(h.outgoing[0].intent, 'connect'); assert.equal(h.outgoing[0].version, 2);
+  assert.equal(h.outgoing[0].intent, 'connect'); assert.equal(h.outgoing[0].version, shared.PROTOCOL_VERSION);
   assert.equal(h.outgoing[0].bindings[0].locator, undefined);
   h.port.onMessage.fire({ type: 'appStopped', message: 'stopped' });
   await h.wait(() => h.session.connection.state === 'stopped');
@@ -122,7 +122,7 @@ test('passive connect does not request launch, stopped hosts do not retry', asyn
 test('connection handshake retains its helper until a unique receiving page is ready', async () => {
   const h = await harness(); const sender = { id: h.chrome.runtime.id, url: h.chrome.runtime.getURL('connect.html'), tab: { id: 80 } };
   h.tabs.set(80, { id: 80, windowId: 2, url: sender.url, status: 'complete', active: true });
-  await h.ui({ type: 'connect' }, sender); h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  await h.ui({ type: 'connect' }, sender); h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   assert.equal(h.trace.includes('close:80'), false);
   h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
@@ -136,7 +136,7 @@ test('cold startup and repeated connect never close the last tab and reuse it as
   const h = await harness([custom]); h.tabs.clear();
   const sender = { id: h.chrome.runtime.id, url: h.chrome.runtime.getURL('connect.html'), tab: { id: 80 } };
   h.tabs.set(80, { id: 80, windowId: 1, url: sender.url, status: 'complete', active: true });
-  await h.ui({ type: 'connect' }, sender); h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  await h.ui({ type: 'connect' }, sender); h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   await h.ui({ type: 'connect' }, sender);
   assert.equal(h.tabs.size, 1); assert.equal(h.tabs.get(80).url, sender.url); assert.equal(h.ports.length, 1);
@@ -157,7 +157,7 @@ test('claimed connection page waits for its pending web navigation to commit', a
     setTimeout(() => { tab.url = change.url; delete tab.pendingUrl; tab.status = 'complete'; }, 30);
     return structuredClone(tab);
   };
-  await h.ui({ type: 'connect' }, sender); h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  await h.ui({ type: 'connect' }, sender); h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
   await h.wait(() => h.outgoing.some(message => ['focusPrepared','deliveryError'].includes(message.type)));
@@ -171,7 +171,7 @@ test('multiple bootstrap tabs hand off one tab before removing only the remainin
     h.tabs.set(id, { id, windowId: 1, url, status: 'complete', active: true });
     await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id } });
   }
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   assert.equal(h.tabs.size, 2);
   h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
@@ -183,7 +183,7 @@ test('a helper navigated by the user is neither overwritten nor removed', async 
   const h = await harness(); const url = h.chrome.runtime.getURL('connect.html');
   h.tabs.set(80, { id: 80, windowId: 2, url, status: 'complete', active: true });
   await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id: 80 } });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   h.tabs.get(80).pendingUrl = 'https://user.example.test/';
   h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
@@ -195,7 +195,7 @@ test('failed bootstrap navigation preserves the browser and can be retried', asy
   const h = await harness(); h.tabs.clear(); const url = h.chrome.runtime.getURL('connect.html');
   h.tabs.set(80, { id: 80, windowId: 1, url, status: 'complete', active: true });
   await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id: 80 } });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   const update = h.chrome.tabs.update;
   h.chrome.tabs.update = async (id, change) => { if (change.url) throw new Error('navigation failed'); return update(id, change); };
@@ -211,7 +211,7 @@ test('cancel during bootstrap resolution cannot navigate or close the helper aft
   const h = await harness(); h.tabs.clear(); const url = h.chrome.runtime.getURL('connect.html');
   h.tabs.set(80, { id: 80, windowId: 1, url, status: 'complete', active: true });
   await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id: 80 } });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   const query = h.chrome.tabs.query;
   let resume;
@@ -228,7 +228,7 @@ test('cancel while claimed helper navigation is pending preserves the target and
   const h = await harness(); h.tabs.clear(); const url = h.chrome.runtime.getURL('connect.html');
   h.tabs.set(80, { id: 80, windowId: 1, url, status: 'complete', active: true });
   await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id: 80 } });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   const update = h.chrome.tabs.update;
   let resume;
@@ -256,7 +256,7 @@ test('cancel during helper cleanup keeps the claimed target and remaining helper
     h.tabs.set(id, { id, windowId: 1, url, status: 'complete', active: true });
     await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id } });
   }
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   const get = h.chrome.tabs.get;
   let resume;
@@ -283,7 +283,7 @@ test('ambiguous targets do not close the connection page while reporting the err
   const url = h.chrome.runtime.getURL('connect.html');
   h.tabs.set(80, { id: 80, windowId: 3, url, status: 'complete', active: true });
   await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url, tab: { id: 80 } });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
   h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
   await h.wait(() => h.outgoing.some(message => message.type === 'deliveryError'));
@@ -316,116 +316,6 @@ test('bindings allow an editable same-site default URL but reject cross-site def
   assert.equal((await h.ui({ type: 'editBinding', id: binding().id, key: 'D', name: '工作', url: 'https://other.test/' })).ok, false);
   assert.equal(h.local.bindings[0].key, 'Ctrl+C');
 });
-test('the default capture shortcut remains reserved in the worker while stored bindings stay parseable', async () => {
-  assert.equal(shared.validateBindings([{ ...binding(), key: 'Alt+Shift+D' }]).length, 1);
-  const h = await harness();
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'Alt+Shift+D');
-  for (const message of [
-    { type: 'beginBinding', tabId: 7, key: 'Alt+Shift+D', name: '冲突' },
-    { type: 'editBinding', id: binding().id, key: 'Alt+Shift+D', name: '冲突' }
-  ]) {
-    const response = await h.ui(message);
-    assert.equal(response.ok, false);
-    assert.match(response.error, /Alt\+Shift\+D.*FastStone/);
-  }
-  assert.equal(h.local.bindings[0].key, 'C');
-  assert.equal(h.content.length, 0);
-});
-test('a trusted native handshake reserves the configured capture shortcut and frees the previous default', async () => {
-  const h = await harness([]);
-  await h.connect('connect', 'q+alt+control');
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'Ctrl+Alt+Q');
-  assert.equal(h.session.captureShortcut, 'Ctrl+Alt+Q');
-  const conflict = await h.ui({ type: 'beginBinding', tabId: 7, key: 'Ctrl+Alt+Q', name: '冲突' });
-  assert.equal(conflict.ok, false);
-  assert.match(conflict.error, /Ctrl\+Alt\+Q.*FastStone/);
-  assert.equal((await h.ui({ type: 'beginBinding', tabId: 7, key: 'Alt+Shift+D', name: '原截图键' })).ok, true);
-  assert.equal((await h.ui({ type: 'bindingPicked', pickId: h.session.pendingPick.id, locator: binding().locator }, {
-    id: h.chrome.runtime.id, tab: { id: 7 }, frameId: 0
-  })).ok, true);
-  assert.equal(h.local.bindings[0].key, 'Alt+Shift+D');
-  assert.equal((await h.ui({ type: 'editBinding', id: h.local.bindings[0].id, key: 'Ctrl+Alt+Q', name: '冲突' })).ok, false);
-});
-test('capture shortcut changes are accepted only through an authenticated native connection', async () => {
-  const h = await harness(); await h.connect();
-  h.port.onMessage.fire({ type: 'captureShortcut', captureShortcut: 'PrintScreen' });
-  await h.wait(() => h.session.captureShortcut === 'PrintScreen');
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'PrintScreen');
-  const change = { type: 'captureShortcut', captureShortcut: 'C' };
-  assert.equal((await h.ui(change)).ok, false, 'even extension UI messages cannot change the native capture shortcut');
-  assert.equal((await h.ui(change, { id: h.chrome.runtime.id, url: 'https://untrusted.example/' })).ok, false);
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'PrintScreen');
-  assert.equal((await h.ui({ type: 'beginBinding', tabId: 7, key: 'PrintScreen', name: '冲突' })).ok, false);
-});
-test('capture shortcut survives worker restart through session storage and legacy hosts reset it to the default', async () => {
-  const original = await harness(); await original.connect('connect', 'Ctrl+Alt+Q');
-  const restarted = await harness([], [], 2, { captureShortcut: original.session.captureShortcut });
-  assert.equal((await restarted.ui({ type: 'getState' })).captureShortcut, 'Ctrl+Alt+Q');
-  assert.equal((await restarted.ui({ type: 'beginBinding', tabId: 7, key: 'Ctrl+Alt+Q', name: '冲突' })).ok, false);
-  await restarted.connect();
-  assert.equal((await restarted.ui({ type: 'getState' })).captureShortcut, 'Alt+Shift+D');
-  assert.equal(restarted.session.captureShortcut, 'Alt+Shift+D');
-});
-test('a delayed helloAck from the previous native port cannot ready an unacknowledged replacement port', async () => {
-  let releaseCapture, delayFirst = true;
-  const h = await harness([], [], 2, {}, { beforeSessionSet: async values => {
-    if ('captureShortcut' in values && delayFirst) {
-      delayFirst = false; await new Promise(resolve => { releaseCapture = resolve; });
-    }
-  } });
-  await h.ui({ type: 'connect' });
-  const old = h.port;
-  old.onMessage.fire({ type: 'helloAck', version: 2, captureShortcut: 'Ctrl+Alt+Q' });
-  await h.wait(() => !!releaseCapture);
-  await h.ui({ type: 'reconnect' });
-  const replacementStart = h.outgoing.length;
-  releaseCapture(); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(h.outgoing.slice(replacementStart).some(message => message.type === 'ready'), false);
-  assert.equal(h.session.connection.state, 'connecting');
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'Alt+Shift+D');
-  assert.equal(h.session.captureShortcut, 'Alt+Shift+D');
-});
-test('a late old-port capture write cannot overwrite the replacement handshake setting', async () => {
-  let releaseCapture, delayFirst = true;
-  const h = await harness([], [], 2, {}, { beforeSessionSet: async values => {
-    if ('captureShortcut' in values && delayFirst) {
-      delayFirst = false; await new Promise(resolve => { releaseCapture = resolve; });
-    }
-  } });
-  await h.ui({ type: 'connect' });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2, captureShortcut: 'Ctrl+Alt+Q' });
-  await h.wait(() => !!releaseCapture);
-  await h.ui({ type: 'reconnect' });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2, captureShortcut: 'Ctrl+Shift+P' });
-  await new Promise(resolve => setImmediate(resolve));
-  releaseCapture();
-  await h.wait(() => h.outgoing.some(message => message.type === 'ready'));
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(h.outgoing.filter(message => message.type === 'ready').length, 1);
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'Ctrl+Shift+P');
-  assert.equal(h.session.captureShortcut, 'Ctrl+Shift+P');
-});
-test('same-port capture changes during helloAck complete before a following prepare operation', async () => {
-  let releaseCapture, delayFirst = true;
-  const h = await harness([{ ...binding(), key: 'Ctrl+Alt+Q' }], [], 2, {}, { beforeSessionSet: async values => {
-    if ('captureShortcut' in values && delayFirst) {
-      delayFirst = false; await new Promise(resolve => { releaseCapture = resolve; });
-    }
-  } });
-  await h.ui({ type: 'connect' });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
-  await h.wait(() => !!releaseCapture);
-  h.port.onMessage.fire({ type: 'captureShortcut', captureShortcut: 'Ctrl+Alt+Q' });
-  h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(h.outgoing.some(message => ['ready', 'focusPrepared', 'deliveryError'].includes(message.type)), false);
-  releaseCapture();
-  await h.wait(() => h.outgoing.some(message => message.type === 'deliveryError'));
-  assert.equal(h.session.captureShortcut, 'Ctrl+Alt+Q');
-  assert.equal(h.session.connection.state, 'connected');
-  assert.match(h.outgoing.at(-1).message, /Ctrl\+Alt\+Q.*FastStone/);
-  assert.equal(h.content.length, 0);
-});
 test('old helloAck connection-state writes cannot ready or override a replacement connection', async () => {
   let releaseConnected, delayFirst = true;
   const h = await harness([], [], 2, {}, { beforeSessionSet: async values => {
@@ -434,7 +324,7 @@ test('old helloAck connection-state writes cannot ready or override a replacemen
     }
   } });
   await h.ui({ type: 'connect' });
-  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  h.port.onMessage.fire({ type: 'helloAck', version: 3 });
   await h.wait(() => !!releaseConnected);
   const reconnect = h.ui({ type: 'reconnect' });
   await new Promise(resolve => setImmediate(resolve));
@@ -442,39 +332,6 @@ test('old helloAck connection-state writes cannot ready or override a replacemen
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.outgoing.some(message => message.type === 'ready'), false);
   assert.equal(h.session.connection.state, 'connecting');
-});
-test('capture storage failures report the existing connection error without changing the accepted setting', async () => {
-  const h = await harness([], [], 2, {}, { beforeSessionSet: async values => {
-    if (values.captureShortcut === 'Ctrl+Alt+Q') throw new Error('session write unavailable');
-  } });
-  await h.connect();
-  h.port.onMessage.fire({ type: 'captureShortcut', captureShortcut: 'Ctrl+Alt+Q' });
-  await h.wait(() => h.session.connection.state === 'error');
-  assert.equal(h.session.connection.message, 'session write unavailable');
-  assert.equal((await h.ui({ type: 'getState' })).captureShortcut, 'Alt+Shift+D');
-  assert.equal(h.session.captureShortcut, 'Alt+Shift+D');
-});
-test('capture shortcut changes during input selection cannot save a conflicting delivery key', async () => {
-  const h = await harness([]); await h.connect();
-  assert.equal((await h.ui({ type: 'beginBinding', tabId: 7, key: 'Ctrl+Alt+Q', name: '选择期间变化' })).ok, true);
-  h.port.onMessage.fire({ type: 'captureShortcut', captureShortcut: 'Ctrl+Alt+Q' });
-  await h.wait(() => h.session.captureShortcut === 'Ctrl+Alt+Q');
-  const response = await h.ui({ type: 'bindingPicked', pickId: h.session.pendingPick.id, locator: binding().locator }, {
-    id: h.chrome.runtime.id, tab: { id: 7 }, frameId: 0
-  });
-  assert.equal(response.ok, false);
-  assert.match(response.error, /FastStone/);
-  assert.deepEqual(h.local.bindings, []);
-});
-test('a saved delivery binding conflicting with the active capture shortcut cannot prepare or paste', async () => {
-  const h = await harness([{ ...binding(), key: 'Ctrl+Alt+Q' }]);
-  await h.connect('connect', 'Ctrl+Alt+Q'); h.trace.length = 0;
-  h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
-  await h.wait(() => h.outgoing.some(message => message.type === 'deliveryError'));
-  assert.match(h.outgoing.at(-1).message, /Ctrl\+Alt\+Q.*FastStone/);
-  assert.equal(h.content.length, 0);
-  assert.equal(h.trace.some(item => item.startsWith('activate') || item.startsWith('create')), false);
-  assert.equal(h.outgoing.some(message => message.type === 'pasteNow'), false);
 });
 test('one target-site tab plus unrelated tabs delivers to that unique chat', async () => {
   const h = await harness([binding()], [{ id: 8, windowId: 2, url: 'https://other.test/', active: true }]); await prepare(h);
@@ -779,4 +636,20 @@ test('canceled or cross-site navigated requests cannot later enable paste', asyn
     h.port.onMessage.fire({ type: 'verifyFocus', requestId }); await new Promise(resolve => setImmediate(resolve));
     assert.equal(h.outgoing.some(message => message.type === 'pasteNow'), false);
   }
+});
+
+test('2.0 allows the old capture chord and PrintScreen as target shortcuts', async () => {
+  for (const key of ['Alt+Shift+D', 'PrintScreen']) {
+    const h = await harness([{ ...binding(), key }]);
+    await prepare(h);
+    assert.equal((await h.ui({ type: 'getState' })).captureShortcut, undefined);
+    assert.ok(h.outgoing.some(message => message.type === 'focusPrepared'));
+  }
+});
+
+test('an older native protocol never marks the 2.0 extension ready', async () => {
+  const h = await harness(); await h.ui({ type: 'connect' });
+  h.port.onMessage.fire({ type: 'helloAck', version: 2 });
+  await h.wait(() => h.session.connection.state === 'error');
+  assert.ok(!h.outgoing.some(message => message.type === 'ready'));
 });

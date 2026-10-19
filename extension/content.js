@@ -63,7 +63,7 @@
   function startPicker(message) {
     stopPicker(); cleanup();
     const banner = document.createElement('div'); banner.dataset.quickshotUi = 'picker';
-    banner.textContent = `快投 · ${message.key} → ${message.name}：请点击聊天输入框完成绑定；Esc 取消。`;
+    banner.textContent = `剪切板快捷发送 · ${message.key} → ${message.name}：请点击聊天输入框完成绑定；Esc 取消。`;
     banner.style.cssText = 'position:fixed;z-index:2147483647;left:24px;right:24px;top:20px;padding:18px 24px;border-radius:14px;background:#6750e6;color:white;font:15px/1.6 system-ui,sans-serif;box-shadow:0 8px 32px #0003;pointer-events:none';
     const click = async event => {
       const element = inputFrom(event.target);
@@ -73,7 +73,7 @@
       try {
         const result = await chrome.runtime.sendMessage({ type: 'bindingPicked', pickId: message.pickId, locator });
         if (!result?.ok) throw new Error(result?.error || '绑定失败，请重试。');
-        toast(`已绑定 ${message.key} → ${message.name}。截图后按 ${message.key} 即可投递。`, '#226746');
+        toast(`已绑定 ${message.key} → ${message.name}。复制图片后按 ${message.key} 即可投递。`, '#226746');
       } catch (error) { toast(error.message); }
     };
     const keydown = event => { if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); stopPicker(); } };
@@ -104,19 +104,14 @@
       current.observed = [...(event.clipboardData?.items || [])].some(item => item.type.startsWith('image/')) || [...(event.clipboardData?.files || [])].some(file => file.type.startsWith('image/'));
     };
     prepared = current;
-    // Dynamic chat sites replace the page title after initial hydration. Maintain
-    // the unique marker only during this delivery; disconnect before restoring it.
     maintainTitle(current); document.addEventListener('paste', current.paste, true);
     current.timeout = setTimeout(() => cleanup(current.requestId), 30000);
-    // Animation frames may be suspended in a minimized window. Publish the title marker first;
-    // foreground and editor focus are checked after the desktop app activates the native window.
     await Promise.race([new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))), sleep(100)]);
     return { ok: prepared === current && location.href === current.url && visible(current.element), url: current.url };
   }
   function maintainTitle(current) {
     if (prepared !== current) return;
     if (location.href !== current.url) { cleanup(current.requestId); return; }
-    // Replacing <head> must not leave detached DOM trees observed or retained.
     if (current.head !== document.head) {
       current.titleObserver.disconnect(); current.head = document.head;
       current.titleObserver.observe(document.documentElement, { childList: true });
@@ -126,7 +121,6 @@
   }
   function focusAtEnd(element) {
     element.focus({ preventScroll: true });
-    // Preserve all draft text even when a portion was selected before delivery.
     if (element instanceof HTMLTextAreaElement) element.setSelectionRange(element.value.length, element.value.length);
     else {
       const range = document.createRange(); range.selectNodeContents(element); range.collapse(false);

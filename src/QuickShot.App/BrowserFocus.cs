@@ -4,8 +4,6 @@ namespace QuickShot.App;
 
 internal static class BrowserFocus
 {
-    // The Windows SDK UIAutomationClient.h interfaces; only the slots used here have marshaled arguments.
-    // UI Automation focuses the page's Document, rather than guessing a browser chrome/renderer child HWND.
     internal static bool TryFocusContent(string token, CancellationToken cancellation)
     {
         IAutomation? automation = null; IElement? root = null; IElements? elements = null; nint condition = 0;

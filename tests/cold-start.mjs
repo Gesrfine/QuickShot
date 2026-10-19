@@ -56,7 +56,7 @@ manifest.permissions.push('tabs');
 manifest.host_permissions = ['http://127.0.0.1/*'];
 await writeFile(manifestPath, JSON.stringify(manifest));
 const sharedPath = path.join(extensionPath, 'shared.mjs');
-await writeFile(sharedPath, (await readFile(sharedPath, 'utf8')).replace("'com.quickshot.edge'", "'com.quickshot.test.coldstart'"));
+await writeFile(sharedPath, (await readFile(sharedPath, 'utf8')).replace("'com.clipboardsender.edge'", "'com.quickshot.test.coldstart'"));
 const workerPath = path.join(extensionPath, 'background.js');
 let worker = await readFile(workerPath, 'utf8');
 const storageRead = "const saved = await chrome.storage.local.get(['bindings', 'profileId', 'schemaVersion']);";
@@ -109,7 +109,7 @@ chrome.runtime.connectNative = () => {
     onMessage: event(listeners), onDisconnect: event(disconnectListeners),
     postMessage(message) {
       void record('native-out', message).then(() => {
-        if (message.type === 'hello') setTimeout(() => incoming({type:'helloAck', version:2}), 350);
+        if (message.type === 'hello') setTimeout(() => incoming({type:'helloAck', version:3}), 350);
         if (message.type === 'ready') setTimeout(() => incoming({type:'prepare', requestId:${JSON.stringify(requestId)}, bindingId:${JSON.stringify(bindingId)}, titleToken:${JSON.stringify('[QuickShot:' + requestId + ']')}}), 100);
       });
     },

@@ -9,23 +9,11 @@ internal static class AppPaths
 {
     private static readonly string PackageRoot = ResolvePackageDirectory(AppContext.BaseDirectory);
     internal static string PackageDirectory => PackageRoot;
-    internal static bool Portable => File.Exists(Path.Combine(PackageDirectory, "portable.flag")) || !File.Exists(Path.Combine(PackageDirectory, "quickshot.install.json"));
-
-    internal static string ResolvePackageDirectory(string baseDirectory)
-    {
-        var directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseDirectory));
-        bool IsPackage(string path) => File.Exists(Path.Combine(path, "extension", "manifest.json"))
-            || File.Exists(Path.Combine(path, "portable.flag")) || File.Exists(Path.Combine(path, "quickshot.install.json"));
-        if (IsPackage(directory)) return directory;
-        var parent = Directory.GetParent(directory);
-        if (Path.GetFileName(directory).Equals("app", StringComparison.OrdinalIgnoreCase) && parent != null && IsPackage(parent.FullName))
-            return parent.FullName;
-        return directory;
-    }
+    internal static string ResolvePackageDirectory(string baseDirectory) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseDirectory));
     internal static string DataDirectory => Environment.GetEnvironmentVariable("QUICKSHOT_DATA_DIR")
-        ?? (Portable ? Path.Combine(PackageDirectory, "data") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuickShot"));
-    internal static string HostManifest => Path.Combine(PackageDirectory, "native-host.json");
-    internal const string HostRegistryKey = @"Software\Microsoft\Edge\NativeMessagingHosts\com.quickshot.edge";
+        ?? Path.Combine(PackageDirectory, "data");
+    internal static string HostManifest => Path.Combine(DataDirectory, "native-host.json");
+    internal const string HostRegistryKey = @"Software\Microsoft\Edge\NativeMessagingHosts\com.clipboardsender.edge";
 
     internal static string? RegisterConnection()
     {
@@ -34,9 +22,10 @@ internal static class AppPaths
         {
             var manifest = JsonSerializer.Serialize(new
             {
-                name = Protocol.HostName, description = "QuickShot Edge native bridge", path = Environment.ProcessPath!, type = "stdio",
+                name = Protocol.HostName, description = "Clipboard Sender Edge bridge", path = Environment.ProcessPath!, type = "stdio",
                 allowed_origins = new[] { $"chrome-extension://{Protocol.ExtensionId}/" }
             });
+            Directory.CreateDirectory(DataDirectory);
             if (!File.Exists(HostManifest) || File.ReadAllText(HostManifest) != manifest)
                 File.WriteAllText(HostManifest, manifest, new UTF8Encoding(false));
             using var key = Registry.CurrentUser.CreateSubKey(HostRegistryKey);
@@ -46,7 +35,7 @@ internal static class AppPaths
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             LocalLog.Write("register", e);
-            return "浏览器连接注册失败。请把文件解压到可写目录，再手动启动快投。";
+            return "浏览器连接注册失败。请把文件解压到可写目录，再手动启动剪切板快捷发送。";
         }
     }
 
@@ -75,7 +64,7 @@ internal static class AppPaths
                     && root.TryGetProperty("allowed_origins", out var origins) && origins.GetArrayLength() == 1
                     && origins[0].GetString() == $"chrome-extension://{Protocol.ExtensionId}/";
             }
-            catch (Exception error) when (error is JsonException or InvalidOperationException) { /* An unrelated or invalid manifest is preserved. */ }
+            catch (Exception error) when (error is JsonException or InvalidOperationException) {}
         }
         var removeEmptyHost = false;
         using (var host = Registry.CurrentUser.OpenSubKey(hostKeyPath, writable: true))
@@ -89,24 +78,10 @@ internal static class AppPaths
         if (removeEmptyHost) Registry.CurrentUser.DeleteSubKey(hostKeyPath, throwOnMissingSubKey: false);
         using (var run = Registry.CurrentUser.OpenSubKey(runKeyPath, writable: true))
         {
-            if (run?.GetValue("QuickShot") is string startup && string.Equals(startup, $"\"{executable}\" --background", StringComparison.OrdinalIgnoreCase))
-                run.DeleteValue("QuickShot", throwOnMissingValue: false);
+            if (run?.GetValue("ClipboardSender") is string startup && string.Equals(startup, $"\"{executable}\" --background", StringComparison.OrdinalIgnoreCase))
+                run.DeleteValue("ClipboardSender", throwOnMissingValue: false);
         }
         if (ownedManifest) File.Delete(HostManifest);
     }
 
-    internal static string DefaultInstallationDirectory()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(HostRegistryKey);
-            if (key?.GetValue("") is string manifest && File.Exists(manifest))
-            {
-                var root = Path.GetDirectoryName(manifest)!;
-                if (File.Exists(Path.Combine(root, "quickshot.install.json"))) return root;
-            }
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { }
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "QuickShot");
-    }
 }
