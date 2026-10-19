@@ -22,7 +22,7 @@ internal static class AppPaths
         {
             var manifest = JsonSerializer.Serialize(new
             {
-                name = Protocol.HostName, description = "Clipboard Sender Edge bridge", path = Environment.ProcessPath!, type = "stdio",
+                name = Protocol.HostName, description = "QuickShot Edge bridge", path = Environment.ProcessPath!, type = "stdio",
                 allowed_origins = new[] { $"chrome-extension://{Protocol.ExtensionId}/" }
             });
             Directory.CreateDirectory(DataDirectory);
@@ -35,7 +35,7 @@ internal static class AppPaths
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             LocalLog.Write("register", e);
-            return "浏览器连接注册失败。请把文件解压到可写目录，再手动启动剪切板快捷发送。";
+            return "浏览器连接注册失败。请把文件解压到可写目录，再手动启动 QuickShot。";
         }
     }
 

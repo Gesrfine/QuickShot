@@ -10,7 +10,7 @@ internal sealed class ClipboardWindow : NativeWindow, IDisposable
     internal event Action? Changed;
     internal ClipboardWindow()
     {
-        CreateHandle(new CreateParams { Caption = "Clipboard Sender listener", Parent = new nint(-3) });
+        CreateHandle(new CreateParams { Caption = "QuickShot clipboard listener", Parent = new nint(-3) });
         if (!NativeMethods.AddClipboardFormatListener(Handle)) throw new System.ComponentModel.Win32Exception();
     }
     protected override void WndProc(ref Message message)
@@ -86,7 +86,7 @@ internal sealed class HintForm : Form
         AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Color.FromArgb(28, 30, 44); DoubleBuffered = true; Text = "剪切板快捷发送 · 当前截图";
+        BackColor = Color.FromArgb(28, 30, 44); DoubleBuffered = true; Text = "QuickShot · 当前截图";
     }
     internal void UpdateHint(IReadOnlyList<TargetBinding> bindings, int seconds)
     {
@@ -209,14 +209,14 @@ internal sealed class StatusNoticeForm : Form
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; TopMost = true;
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.FromArgb(28, 30, 44); DoubleBuffered = true;
-        Text = "剪切板快捷发送 · 状态提示"; AccessibleRole = AccessibleRole.Alert;
+        Text = "QuickShot · 状态提示"; AccessibleRole = AccessibleRole.Alert;
         _dismiss.Tick += (_, _) => Hide();
     }
 
     internal void ShowMessage(string message)
     {
         _dismiss.Stop();
-        _message = message; AccessibleName = "剪切板快捷发送状态"; AccessibleDescription = message;
+        _message = message; AccessibleName = "QuickShot 状态"; AccessibleDescription = message;
         _area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Reflow(); PlaceInWorkingArea();
         if (!Visible) Show();
@@ -254,7 +254,7 @@ internal sealed class StatusNoticeForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        TextRenderer.DrawText(e.Graphics, "剪切板快捷发送", _titleFont, new Rectangle(_padding, _padding / 2, Width - 2 * _padding, _header - _padding / 2),
+        TextRenderer.DrawText(e.Graphics, "QuickShot", _titleFont, new Rectangle(_padding, _padding / 2, Width - 2 * _padding, _header - _padding / 2),
             Color.FromArgb(185, 173, 255), TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter);
         TextRenderer.DrawText(e.Graphics, _message, _messageFont, new Rectangle(_padding, _header, Width - 2 * _padding, Height - _header - _padding),
             Color.White, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
@@ -290,7 +290,7 @@ internal sealed class DashboardForm : Form
     {
         _preview = preview;
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "剪切板快捷发送"; Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(248, 249, 253);
+        Text = "QuickShot"; Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(248, 249, 253);
         ClientSize = new Size(720, 540); MinimumSize = new Size(680, 510); StartPosition = FormStartPosition.CenterScreen;
         using var icon = DesktopUi.CreateIcon(); Icon = (Icon)icon.Clone();
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
@@ -298,7 +298,7 @@ internal sealed class DashboardForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-        layout.Controls.Add(new Label { Text = "剪切板快捷发送 2.0", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold), ForeColor = Color.FromArgb(28, 32, 48) });
+        layout.Controls.Add(new Label { Text = "QuickShot 2.0", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold), ForeColor = Color.FromArgb(28, 32, 48) });
         layout.Controls.Add(_instructions);
         layout.Controls.Add(_connection);
         _targets.Columns.Add("快捷键", 160); _targets.Columns.Add("接收目标", 170); _targets.Columns.Add("默认网址", 300);
@@ -351,7 +351,7 @@ internal sealed class DashboardForm : Form
     internal static void OpenManager()
     {
         try { DesktopUi.OpenEdge($"chrome-extension://{Protocol.ExtensionId}/options.html"); }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { MessageBox.Show("无法打开 Edge，请先安装扩展。\n" + e.Message, "剪切板快捷发送"); }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { MessageBox.Show("无法打开 Edge，请先安装扩展。\n" + e.Message, "QuickShot"); }
     }
 
     internal void RefreshState(bool connected, IReadOnlyList<TargetBinding> bindings, string status)

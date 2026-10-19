@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.join(root, 'artifacts');
-const executable = path.resolve(process.argv[2] || path.join(artifacts, 'staging/ClipboardSender-2.0.0/ClipboardSender.exe'));
+const executable = path.resolve(process.argv[2] || path.join(artifacts, 'staging/QuickShot-2.0.1/QuickShot.exe'));
 const resultPath = path.resolve(process.argv[3] || path.join(artifacts, 'bridge-resources.json'));
 const protocolVersion = Number(process.argv[4] || 3);
 const fixtureName = `bridge-resource-smoke-${randomUUID().replaceAll('-', '')}`;

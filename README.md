@@ -1,4 +1,4 @@
-# 剪切板快捷发送 2.0
+# QuickShot 2.0.1
 
 任意来源的新图片进入剪贴板 → 10 秒内按目标快捷键 → 切到绑定的 Edge 页面并粘贴 → 确认附件后手动发送。
 
@@ -8,7 +8,7 @@
 
 支持 Windows 10/11 x64。先安装 [.NET 10 Desktop Runtime（Windows x64）](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)，无需安装 SDK。便携包不捆绑运行库；运行库由电脑上的其他 .NET 程序共享。没有运行库时 Windows 的 .NET 启动提示会引导安装。
 
-完整解压 `ClipboardSender-2.0.0-win-x64.zip`。包内只有 `ClipboardSender.exe` 与 `extension/`；不要在压缩包中运行。先退出旧版，再双击 EXE。升级后加载新目录的扩展，并刷新已打开的聊天页面。开机自启默认关闭，关闭主窗口后仍在托盘，右键托盘可暂停、退出。
+完整解压 `QuickShot-2.0.1-win-x64.zip`。包内只有 `QuickShot.exe`、`extension/` 与可删除的 `使用教程.html`；不要在压缩包中运行。先退出旧版，再双击 EXE。升级后加载新目录的扩展，并刷新已打开的聊天页面。开机自启默认关闭，关闭主窗口后仍在托盘，右键托盘可暂停、退出。
 
 ## 绑定 Edge 页面
 
@@ -30,12 +30,12 @@
 
 首次运行按需创建 `data/`，其中保存提示偏好、目标缓存、诊断和浏览器连接清单。完整绑定与输入框定位由 Edge 扩展存储保存在当前浏览器用户配置中。移动目录后重新运行 EXE，并在 Edge 加载新位置的扩展。日志不包含图片、剪贴板正文或聊天内容。
 
-移除时点击“解除浏览器连接”，再从 Edge 移除扩展，退出后自行删除便携目录。解除连接会保留数据，仅移除属于当前副本的浏览器登记及开机自启项。任务管理器进程名为 `ClipboardSender.exe`；连接后可有一个托盘进程和一个 Native Messaging 通信进程。
+移除时点击“解除浏览器连接”，再从 Edge 移除扩展，退出后自行删除便携目录。解除连接会保留数据，仅移除属于当前副本的浏览器登记及开机自启项。任务管理器显示名为 `QuickShot`，进程名为 `QuickShot.exe`；连接后可有一个托盘进程和一个 Native Messaging 通信进程。
 
 ## 构建和版本
 
-项目内准备 .NET 10 SDK；生成图标和浏览器回归还需要 Node.js。正常构建运行 `pwsh -File scripts/build.ps1`，已有完整依赖缓存时可加 `-NoRestore`。输出为独立版本路径 `artifacts/ClipboardSender-2.0.0-win-x64.zip`。
+项目内准备 .NET 10 SDK；生成图标和浏览器回归还需要 Node.js。正常构建运行 `pwsh -File scripts/build.ps1`，已有完整依赖缓存时可加 `-NoRestore`。输出为独立版本路径 `artifacts/QuickShot-2.0.1-win-x64.zip`。
 
 `scripts/test.ps1` 运行核心、运行时、界面与扩展检查，`-Browser` 增加隔离 Edge 回归，`-NativeFocus` 增加真实窗口聚焦和测试输入框的 Ctrl+V 验证。测试不替用户登录，不发送聊天消息。
 
-源码、扩展、测试及构建脚本保存在 Git；SDK、运行数据和构建产物不入 Git。`v1.3.6` 保留改写前的基线，`v2.0.0` 标记本次正式版本。后续每个正式版本均提交并建立对应版本标签，保留同版本的验证与包哈希记录。
+源码、扩展、测试及构建脚本保存在 Git；SDK、运行数据和构建产物不入 Git。`v1.3.6` 保留改写前的基线，`v2.0.0` 保留通用剪贴板版本，`v2.0.1` 统一 QuickShot 名称并加入独立 HTML 教程。后续每个正式版本均提交并建立对应版本标签，保留同版本的验证与包哈希记录。

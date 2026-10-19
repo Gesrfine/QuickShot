@@ -3,7 +3,7 @@ import { recordShortcut } from './shortcut-input.mjs';
 const $ = id => document.getElementById(id);
 let currentTab = null;
 function showConnection(connection) {
-  $('connection').textContent = connection?.message || '请手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。';
+  $('connection').textContent = connection?.message || '请手动运行 QuickShot，或点击“启动 / 连接 QuickShot”。';
   $('connection').dataset.state = connection?.state || 'disconnected';
 }
 try {

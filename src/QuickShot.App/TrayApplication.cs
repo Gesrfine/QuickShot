@@ -30,7 +30,7 @@ internal sealed class TrayApplication : ApplicationContext
     private bool _peerReady;
     private string? _profileId;
     private Delivery? _delivery;
-    private string _status = "首次使用：运行 ClipboardSender.exe，在 Edge 加载 extension 文件夹，然后绑定聊天输入框。";
+    private string _status = "首次使用：运行 QuickShot.exe，在 Edge 加载 extension 文件夹，然后绑定聊天输入框。";
     private bool _paused, _disposed;
     private uint _lastClipboardSequence;
     private string CacheFile => Path.Combine(LocalLog.DataDirectory, "targets.json");
@@ -60,7 +60,7 @@ internal sealed class TrayApplication : ApplicationContext
         _mouse = new MouseMonitor { Clicked = () => { if (_gate.Phase == CapturePhase.Armed) CancelForOtherInput(); } };
         _clipboard.Changed += ClipboardChanged;
         var menu = new ContextMenuStrip();
-        menu.Items.Add("打开剪切板快捷发送", null, (_, _) => ShowDashboard());
+        menu.Items.Add("打开 QuickShot", null, (_, _) => ShowDashboard());
         menu.Items.Add("管理接收目标", null, (_, _) => DashboardForm.OpenManager());
         var pause = new ToolStripMenuItem("暂停快捷投递") { CheckOnClick = true };
         pause.CheckedChanged += (_, _) =>
@@ -73,7 +73,7 @@ internal sealed class TrayApplication : ApplicationContext
         menu.Items.Add(pause); menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("解除浏览器连接并退出", null, (_, _) => RemoveConnection());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
-        _tray = new NotifyIcon { Text = "剪切板快捷发送 · 图片 → Edge", Icon = _icon, ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Text = "QuickShot · 图片 → Edge", Icon = _icon, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowDashboard();
         _server.Message += (peer, message) => Post(() => Receive(peer, message));
         _server.Disconnected += peer => Post(() =>
@@ -194,7 +194,7 @@ internal sealed class TrayApplication : ApplicationContext
                 if (!Guid.TryParse(profile, out _)) return;
                 if (_peer != null && _profileId != profile)
                 {
-                    _ = peer.SendAsync(new JsonObject { ["type"] = "rejected", ["message"] = "已有另一个 Edge 用户配置连接，请先关闭另一个配置中的剪切板快捷发送扩展。" }); return;
+                    _ = peer.SendAsync(new JsonObject { ["type"] = "rejected", ["message"] = "已有另一个 Edge 用户配置连接，请先关闭另一个配置中的 QuickShot 扩展。" }); return;
                 }
                 if (_peer?.Id != peer.Id) _peer?.Dispose();
                 _peer = peer; _profileId = profile;
@@ -342,7 +342,7 @@ internal sealed class TrayApplication : ApplicationContext
                 if (monitorMouse)
                 {
                     _gate.Cancel(); _hint?.Hide(); CancelDelivery(false);
-                    Notify("无法监听鼠标取消操作，本次投递已停止。请重新启动剪切板快捷发送后重试。");
+                    Notify("无法监听鼠标取消操作，本次投递已停止。请重新启动 QuickShot 后重试。");
                     return;
                 }
             }
@@ -454,11 +454,11 @@ internal sealed class TrayApplication : ApplicationContext
             LocalLog.Write("unregister", e);
             _paused = wasPaused;
             UpdateActivityTimer();
-            Notify("移除剪切板快捷发送连接失败，程序仍可继续使用。请检查目录和注册表权限后重试。" + Environment.NewLine + e.Message);
+            Notify("移除 QuickShot 连接失败，程序仍可继续使用。请检查目录和注册表权限后重试。" + Environment.NewLine + e.Message);
             return;
         }
-        MessageBox.Show("已移除当前程序的浏览器连接及对应的开机自启。\n\n请到 Edge 扩展页移除剪切板快捷发送扩展，再删除本程序文件夹。设置和绑定数据已保留。",
-            "剪切板快捷发送", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show("已移除当前程序的浏览器连接及对应的开机自启。\n\n请到 Edge 扩展页移除 QuickShot 扩展，再删除本程序文件夹。设置和绑定数据已保留。",
+            "QuickShot", MessageBoxButtons.OK, MessageBoxIcon.Information);
         ExitThread();
     }
 

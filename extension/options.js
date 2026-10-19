@@ -39,7 +39,7 @@ async function refresh() {
 }
 $('reconnect').addEventListener('click', async () => { try { await action({ type: 'reconnect' }); await refresh(); } catch (error) { $('error').textContent = error.message; } });
 function showConnection(connection) {
-  $('connection').textContent = connection?.message || '请手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。';
+  $('connection').textContent = connection?.message || '请手动运行 QuickShot，或点击“启动 / 连接 QuickShot”。';
   $('connection').dataset.state = connection?.state || 'stopped';
 }
 chrome.storage.onChanged.addListener((changes, area) => {

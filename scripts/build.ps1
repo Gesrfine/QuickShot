@@ -19,16 +19,17 @@ $version = ([xml](Get-Content -LiteralPath 'src\QuickShot.App\QuickShot.App.cspr
 $publish = Join-Path $repoRoot ('artifacts\build\' + $version)
 & $dotnet publish src/QuickShot.App -c Release -r win-x64 --self-contained false --output $publish @restoreOptions '-p:PublishSingleFile=true' '-p:UseAppHost=true' '-p:EnableCompressionInSingleFile=false' '-p:DebugType=None' '-p:DebugSymbols=false'
 if ($LASTEXITCODE -ne 0) { throw 'Framework-dependent publish failed.' }
-$stage = [IO.Path]::GetFullPath((Join-Path $repoRoot ('artifacts\staging\ClipboardSender-' + $version)))
+$stage = [IO.Path]::GetFullPath((Join-Path $repoRoot ('artifacts\staging\QuickShot-' + $version)))
 if (-not $stage.StartsWith($repoRoot + '\artifacts\staging\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid staging directory.' }
 if (Test-Path -LiteralPath $stage) {
     if ((Get-Item -LiteralPath $stage).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Staging cannot be a reparse point.' }
     Remove-Item -LiteralPath $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $publish 'QuickShot.exe') -Destination (Join-Path $stage 'ClipboardSender.exe')
+Copy-Item -LiteralPath (Join-Path $publish 'QuickShot.exe') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $repoRoot 'extension') -Destination $stage -Recurse
-$archive = Join-Path $repoRoot ('artifacts\ClipboardSender-' + $version + '-win-x64.zip')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\使用教程.html') -Destination $stage
+$archive = Join-Path $repoRoot ('artifacts\QuickShot-' + $version + '-win-x64.zip')
 $temporary = $archive + '.building.zip'
 if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
 try {

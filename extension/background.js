@@ -24,7 +24,7 @@ const initialized = (async () => {
   await chrome.storage.local.set({ profileId });
   await syncContentScripts();
   await chrome.alarms.clear('quickshot-reconnect');
-  await setConnection(invalid ? 'error' : 'stopped', invalid ? '绑定数据无效，原数据已保留。请重新绑定接收目标。' : '尚未连接。手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。');
+  await setConnection(invalid ? 'error' : 'stopped', invalid ? '绑定数据无效，原数据已保留。请重新绑定接收目标。' : '尚未连接。手动运行 QuickShot，或点击“启动 / 连接 QuickShot”。');
 })();
 
 function setConnection(state, message, sourcePort = null) {
@@ -39,7 +39,7 @@ function setConnection(state, message, sourcePort = null) {
   return result;
 }
 function nativeSend(message) {
-  if (!nativePort) throw new Error('托盘程序未连接。请手动运行剪切板快捷发送，或点击“启动 / 连接剪切板快捷发送”。');
+  if (!nativePort) throw new Error('托盘程序未连接。请手动运行 QuickShot，或点击“启动 / 连接 QuickShot”。');
   nativePort.postMessage(message);
 }
 async function syncContentScripts() {
@@ -107,7 +107,7 @@ async function connectNative(intent = 'connect', connectionTabId = null) {
     if (nativePort !== port) return;
     nativePort = null; nativeReady = false;
     cancelDelivery().catch(() => {});
-    setConnection('disconnected', '连接已断开。请手动启动剪切板快捷发送或重新连接。详情：' + reason).catch(() => {});
+    setConnection('disconnected', '连接已断开。请手动启动 QuickShot 或重新连接。详情：' + reason).catch(() => {});
   });
   port.postMessage({ type: 'hello', version: PROTOCOL_VERSION, intent, profileId, bindings: targetSummary(bindings) });
 }

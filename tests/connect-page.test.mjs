@@ -64,7 +64,7 @@ test('only session connection changes update the page status', async () => {
 
 test('the 2.0 connection interface exposes status and an explicit retry', async () => {
   const html = await readFile(new URL('../extension/connect.html', import.meta.url), 'utf8');
-  assert.match(html, /<title>连接剪切板快捷发送<\/title>/);
+  assert.match(html, /<title>连接 QuickShot<\/title>/);
   assert.match(html, /href="ui\.css"/);
   assert.match(html, /id="connection"/);
   assert.match(html, /id="error"/);

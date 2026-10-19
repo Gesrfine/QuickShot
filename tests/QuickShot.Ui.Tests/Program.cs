@@ -54,7 +54,7 @@ internal static class Program
         using var dashboard = (Form)Create("DashboardForm", true); dashboard.Opacity = 0;
         dashboard.Show(); Application.DoEvents();
         var controls = Descendants(dashboard).ToArray();
-        Check(dashboard.Text == "剪切板快捷发送", "new program branding is displayed");
+        Check(dashboard.Text == "QuickShot", "QuickShot program branding is displayed");
         Check(!controls.Any(control => control.Text.Contains("FastStone") || control.Text.Contains("截图快捷键")), "dashboard contains no dedicated capture-tool controls");
         Check(!controls.OfType<Button>().Any(button => button.Text == "使用说明"), "dashboard has no instructions button");
         Check(App.GetType("QuickShot.App.InstallationForm") == null && App.GetType("QuickShot.App.CaptureShortcutBox") == null, "legacy installer and capture settings types are removed");

@@ -83,7 +83,7 @@ internal static class NativeBridge
             {
                 if (hello["intent"]?.GetValue<string>() != "launch")
                 {
-                    await Protocol.WriteAsync(output, new JsonObject { ["type"] = "appStopped", ["message"] = "剪切板快捷发送尚未运行。请手动打开程序，或点击“启动剪切板快捷发送”。" }, CancellationToken.None);
+                    await Protocol.WriteAsync(output, new JsonObject { ["type"] = "appStopped", ["message"] = "QuickShot 尚未运行。请手动打开程序，或点击“启动 / 连接 QuickShot”。" }, CancellationToken.None);
                     return 0;
                 }
                 var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };

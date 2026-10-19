@@ -6,8 +6,10 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>QuickShot</AssemblyName>
-    <Version>2.0.0</Version>
-    <Product>剪切板快捷发送</Product>
+    <Version>2.0.1</Version>
+    <Title>QuickShot</Title>
+    <Product>QuickShot</Product>
+    <Company>QuickShot</Company>
     <Description>将剪贴板新图片快捷粘贴到绑定的 Edge 页面</Description>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>

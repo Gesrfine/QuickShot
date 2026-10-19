@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>接收目标 · 剪切板快捷发送</title><link rel="stylesheet" href="ui.css"></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>接收目标 · QuickShot</title><link rel="stylesheet" href="ui.css"></head>
 <body class="options">
-  <div class="brand"><img src="icons/48.png" alt=""><div><div class="eyebrow">CLIPBOARD SENDER 2.0 / 接收目标</div><h1>复制图片，按键直达。</h1></div></div>
+  <div class="brand"><img src="icons/48.png" alt=""><div><div class="eyebrow">QuickShot 2.0 / 接收目标</div><h1>复制图片，按键直达。</h1></div></div>
   <p>每个目标可设置最多 3 键的组合。目标网站只有一个标签页时投递到该页；多个时停止；没有时打开默认网址。</p>
-  <div class="row"><div class="status grow" id="connection">正在检查连接…</div><button id="reconnect">启动 / 连接剪切板快捷发送</button></div>
+  <div class="row"><div class="status grow" id="connection">正在检查连接…</div><button id="reconnect">启动 / 连接 QuickShot</button></div>
   <div class="steps"><div class="step"><b>01 / 复制</b>任意来源的新图片进入剪贴板</div><div class="step"><b>02 / 投递</b>10 秒内按快捷键；其他按键或点击取消</div><div class="step"><b>03 / 发送</b>光标留在输入框，确认附件后手动发送</div></div>
-  <div class="panel" id="empty" hidden><b>还没有接收目标</b><p>打开 DeepSeek 或其他能粘贴图片的聊天网页，点击工具栏中的剪切板快捷发送扩展图标，然后绑定输入框。</p></div>
+  <div class="panel" id="empty" hidden><b>还没有接收目标</b><p>打开 DeepSeek 或其他能粘贴图片的聊天网页，点击工具栏中的 QuickShot 扩展图标，然后绑定输入框。</p></div>
   <main id="targets"></main><div id="error" class="error" role="status"></div>
   <p class="hint">新增目标：先进入聊天网页，再点击扩展图标。点击快捷键框后直接按组合键（例如 Ctrl+Alt+C），再保存。默认网址可单独修改，切换聊天不会覆盖它。仅新复制的图片进入待投递状态，文字和文件不触发。无痕窗口及嵌入式跨域输入框暂不支持。</p>
   <script type="module" src="options.js"></script>

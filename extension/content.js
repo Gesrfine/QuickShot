@@ -63,7 +63,7 @@
   function startPicker(message) {
     stopPicker(); cleanup();
     const banner = document.createElement('div'); banner.dataset.quickshotUi = 'picker';
-    banner.textContent = `剪切板快捷发送 · ${message.key} → ${message.name}：请点击聊天输入框完成绑定；Esc 取消。`;
+    banner.textContent = `QuickShot · ${message.key} → ${message.name}：请点击聊天输入框完成绑定；Esc 取消。`;
     banner.style.cssText = 'position:fixed;z-index:2147483647;left:24px;right:24px;top:20px;padding:18px 24px;border-radius:14px;background:#6750e6;color:white;font:15px/1.6 system-ui,sans-serif;box-shadow:0 8px 32px #0003;pointer-events:none';
     const click = async event => {
       const element = inputFrom(event.target);
