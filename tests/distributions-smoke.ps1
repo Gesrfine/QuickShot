@@ -1,8 +1,9 @@
-param([string]$PortableArchive)
+param([string]$PortableArchive, [string]$PublishedExecutable)
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $version = ([xml](Get-Content -LiteralPath (Join-Path $repoRoot 'src\QuickShot.App\QuickShot.App.csproj') -Raw)).Project.PropertyGroup.Version
 if (-not $PortableArchive) { $PortableArchive = Join-Path $repoRoot ('artifacts\QuickShot-' + $version + '-win-x64.zip') }
+if (-not $PublishedExecutable) { $PublishedExecutable = Join-Path $repoRoot ('artifacts\build\' + $version + '\QuickShot.exe') }
 function Check([bool]$Value, [string]$Message) { if (-not $Value) { throw $Message }; Write-Output ('PASS: ' + $Message) }
 function Read-Hash($Entry) {
     $stream = $Entry.Open()
@@ -27,7 +28,7 @@ try {
     $roots = @($files.Keys | ForEach-Object { $_.Split('/')[0] } | Sort-Object -Unique)
     Check ($roots.Count -eq 3 -and $roots -contains 'QuickShot.exe' -and $roots -contains 'extension' -and $roots -contains '使用教程.html') 'root contains only QuickShot.exe, extension and the removable HTML guide'
     foreach ($name in $files.Keys) {
-        $source = if ($name -eq 'QuickShot.exe') { Join-Path $repoRoot ('artifacts\build\' + $version + '\QuickShot.exe') }
+        $source = if ($name -eq 'QuickShot.exe') { $PublishedExecutable }
             elseif ($name -eq '使用教程.html') { Join-Path $repoRoot 'docs\使用教程.html' }
             elseif ($name.StartsWith('extension/')) { Join-Path $repoRoot $name }
             else { throw ('Unexpected package file: ' + $name) }

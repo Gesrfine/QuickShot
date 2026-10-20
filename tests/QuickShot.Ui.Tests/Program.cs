@@ -38,7 +38,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         try
         {
-            CheckDashboard(output); CheckHint(output); CheckNotice(output); CheckActivity(); CheckBrowserBootstrap();
+            CheckDashboard(output); CheckHint(output); CheckNotice(output); CheckFullscreenOverlays(); CheckWindowVisibility(); CheckActivity(); CheckBrowserBootstrap();
             File.WriteAllText(Path.Combine(output, "result.json"), JsonSerializer.Serialize(new { passed = true, checks = Checks }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine("UI checks passed: " + Checks.Count); return 0;
         }
@@ -98,7 +98,7 @@ internal static class Program
             using var form = (Form)Create("HintForm"); form.Opacity = 0;
             var bindings = Enumerable.Range(0, count).Select(index => new TargetBinding("ui-" + index, "Ctrl+Shift+" + (char)('A' + index), "接收目标 " + (index + 1), "https://www.doubao.com/chat/")).ToArray();
             var foreground = GetForegroundWindow(); Call(form, "UpdateHint", bindings, 10); Application.DoEvents();
-            Check(Screen.FromPoint(Cursor.Position).WorkingArea.Contains(form.Bounds), $"hint {count}: stays in working area");
+            Check(Screen.FromHandle(foreground).WorkingArea.Contains(form.Bounds), $"hint {count}: stays in the foreground screen's working area");
             Check(form.Width <= 320 * form.DeviceDpi / 96f * (int)Field(form, "_columns")! + 1, $"hint {count}: compact width");
             Check((int)Field(form, "_keyWidth")! + 2 * (int)Field(form, "_padding")! < form.Width / (int)Field(form, "_columns")!, $"hint {count}: full shortcut fits");
             Check(GetForegroundWindow() == foreground, $"hint {count}: does not steal focus");
@@ -130,6 +130,42 @@ internal static class Program
         Check(!Enabled(timer) && !Enabled(keyboard) && !Enabled(mouse), "cancellation returns to no polling or input hooks");
     }
 
+    private static void CheckFullscreenOverlays()
+    {
+        foreach (var name in new[] { "HintForm", "StatusNoticeForm" })
+        {
+            using var notification = (Form)Create(name);
+            if (name == "HintForm") Call(notification, "UpdateHint", new[] { new TargetBinding("overlay", "C", "测试目标", "https://example.com/") }, 10);
+            else Call(notification, "ShowMessage", "测试结果");
+            using var cover = new Form { FormBorderStyle = FormBorderStyle.None, Bounds = Screen.PrimaryScreen!.Bounds, TopMost = true, Text = "QuickShot owned fullscreen overlay fixture" };
+            cover.Show(); cover.Activate(); Application.DoEvents();
+            var foreground = GetForegroundWindow();
+            var layer = (System.Windows.Forms.Timer)App.GetType("QuickShot.App.NotificationForm")!.GetField("_layer", Instance)!.GetValue(notification)!;
+            Check(layer.Enabled, name + ": visible notification maintains its overlay layer");
+            Call(layer, "OnTick", EventArgs.Empty); Application.DoEvents();
+            var windows = new List<nint>();
+            EnumWindows((window, _) => { windows.Add(window); return true; }, 0);
+            Check(windows.IndexOf(notification.Handle) < windows.IndexOf(cover.Handle), name + ": notification is above a later topmost fullscreen window");
+            Check(GetForegroundWindow() == foreground, name + ": raising the overlay preserves fullscreen keyboard focus");
+            notification.Hide();
+            Check(!layer.Enabled, name + ": hidden notification stops layer maintenance");
+        }
+    }
+
+    private static void CheckWindowVisibility()
+    {
+        var visible = App.GetType("QuickShot.App.ForegroundVisibility")!.GetMethod("IsUnobscured", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var area = Screen.PrimaryScreen!.WorkingArea;
+        using var target = new Form { Bounds = new Rectangle(area.Left + 50, area.Top + 50, 300, 250), StartPosition = FormStartPosition.Manual, TopMost = true };
+        target.Show(); Application.DoEvents();
+        using var owned = new Form { Bounds = target.Bounds, FormBorderStyle = FormBorderStyle.None, TopMost = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual };
+        owned.Owner = target; owned.Show(); owned.Activate(); Application.DoEvents();
+        Check((bool)visible.Invoke(null, [target.Handle])!, "owned browser-style native popups do not count as an external fullscreen cover");
+        using var other = new Form { Bounds = target.Bounds, FormBorderStyle = FormBorderStyle.None, TopMost = true, StartPosition = FormStartPosition.Manual };
+        other.Show(); other.Activate(); Application.DoEvents();
+        Check(!(bool)visible.Invoke(null, [target.Handle])!, "an unrelated topmost window is detected as a cover");
+    }
+
     private static void CheckBrowserBootstrap()
     {
         var create = App.GetType("QuickShot.App.DesktopUi")!.GetMethod("CreateEdgeStartInfo", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -144,4 +180,6 @@ internal static class Program
         bitmap.Save(file, System.Drawing.Imaging.ImageFormat.Png);
     }
     [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
+    private delegate bool Enumerator(nint window, nint parameter);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(Enumerator callback, nint parameter);
 }

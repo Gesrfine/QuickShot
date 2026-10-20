@@ -23,13 +23,13 @@
 </head>
 <body>
 <main>
-  <header><h1>QuickShot</h1><p class="meta">2.0.1 · Windows 10 / 11 x64 · 便携版使用教程</p></header>
+  <header><h1>QuickShot</h1><p class="meta">2.0.2 · Windows 10 / 11 x64 · 便携版使用教程</p></header>
   <p>把剪贴板中的新图片快捷粘贴到绑定的 Edge 聊天输入框，保留已有文字，最后由你手动发送。</p>
   <p class="flow">复制图片 → 10 秒内按绑定快捷键 → 确认网页附件 → 手动发送</p>
   <h2>首次使用</h2>
   <ol>
     <li>安装 <a href="https://dotnet.microsoft.com/en-us/download/dotnet/10.0">微软 .NET 10 官方下载页</a>中的 <strong>.NET Desktop Runtime → Windows → x64 安装程序</strong>。已安装 10.0.x（x64）桌面运行时可直接使用，无需安装 SDK。</li>
-    <li>完整解压便携包，退出旧版，运行 <code>QuickShot.exe</code>。</li>
+    <li>完整解压便携包到硬盘根目录，例如 <code>D:\QuickShot</code>，退出旧版，运行 <code>QuickShot.exe</code>。</li>
     <li>在 Edge 地址栏输入 <code>edge://extensions</code>，开启“开发人员模式”，点击“加载解压缩的扩展”，选择包内的 <code>extension</code> 文件夹。</li>
     <li>打开支持粘贴图片的聊天网页，点击 <strong>QuickShot</strong> 扩展图标，设置名称、快捷键及默认网址；允许网站访问后，点击网页聊天输入框完成绑定。</li>
   </ol>
@@ -40,6 +40,7 @@
     <li>目标网站只有一个候选页时使用该页；没有时打开默认网址；有多个时停止。看到“已执行粘贴”后，仍需确认网页出现附件。</li>
   </ul>
   <h2>设置与移除</h2>
+  <p>升级时先从托盘退出旧版，同时更新 <code>QuickShot.exe</code> 和 <code>extension</code> 文件夹，保留 <code>data</code>。在 Edge 扩展页点击重新加载，并刷新目标网页；不要先移除扩展，以保留已有绑定。</p>
   <p>双击托盘图标打开主窗口，可管理绑定、设置开机自启或关闭右下角提示。关闭窗口后程序仍在托盘，右键托盘可退出。</p>
   <p><code>data</code> 按需生成，保存本地设置；完整绑定保存在 Edge 用户配置中。移动目录后运行程序，并在 Edge 从新位置加载扩展。移除时先点“解除浏览器连接”，再移除 Edge 扩展，退出程序后删除文件夹。</p>
   <footer>本教程可直接删除，不影响程序使用。</footer>

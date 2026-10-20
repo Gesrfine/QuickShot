@@ -67,7 +67,32 @@ internal static class DesktopUi
     }
 }
 
-internal sealed class HintForm : Form
+internal class NotificationForm : Form
+{
+    private readonly System.Windows.Forms.Timer _layer = new() { Interval = 250 };
+    protected override bool ShowWithoutActivation => true;
+    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x80; return p; } }
+
+    internal NotificationForm()
+    {
+        _layer.Tick += (_, _) => NativeMethods.RaiseWithoutActivation(Handle);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible) { NativeMethods.RaiseWithoutActivation(Handle); _layer.Start(); }
+        else _layer.Stop();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _layer.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class HintForm : NotificationForm
 {
     private IReadOnlyList<TargetBinding> _bindings = [];
     private Font _titleFont = new("Microsoft YaHei UI", 14, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -79,8 +104,6 @@ internal sealed class HintForm : Form
     private bool _layoutDirty = true;
     private int _fontDpi = 96;
     private string[] _hosts = [];
-    protected override bool ShowWithoutActivation => true;
-    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x80; return p; } }
     internal HintForm()
     {
         AutoScaleMode = AutoScaleMode.None;
@@ -102,7 +125,7 @@ internal sealed class HintForm : Form
         _seconds = seconds;
         if (!Visible)
         {
-            _area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            _area = Screen.FromHandle(NativeMethods.GetForegroundWindow()).WorkingArea;
             _layoutDirty = true;
         }
         if (_layoutDirty)
@@ -191,7 +214,7 @@ internal sealed class HintForm : Form
     }
 }
 
-internal sealed class StatusNoticeForm : Form
+internal sealed class StatusNoticeForm : NotificationForm
 {
     private readonly System.Windows.Forms.Timer _dismiss = new() { Interval = 5500 };
     private Font _titleFont = new("Microsoft YaHei UI", 13, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -200,8 +223,6 @@ internal sealed class StatusNoticeForm : Form
     private Rectangle _area;
     private int _fontDpi = 96;
     private int _padding = 14, _header = 29;
-    protected override bool ShowWithoutActivation => true;
-    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x80; return p; } }
 
     internal StatusNoticeForm()
     {
@@ -217,7 +238,7 @@ internal sealed class StatusNoticeForm : Form
     {
         _dismiss.Stop();
         _message = message; AccessibleName = "QuickShot 状态"; AccessibleDescription = message;
-        _area = Screen.FromPoint(Cursor.Position).WorkingArea;
+        _area = Screen.FromHandle(NativeMethods.GetForegroundWindow()).WorkingArea;
         Reflow(); PlaceInWorkingArea();
         if (!Visible) Show();
         Reflow(); PlaceInWorkingArea();
@@ -298,7 +319,7 @@ internal sealed class DashboardForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-        layout.Controls.Add(new Label { Text = "QuickShot 2.0", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold), ForeColor = Color.FromArgb(28, 32, 48) });
+        layout.Controls.Add(new Label { Text = "QuickShot 2.0.2", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold), ForeColor = Color.FromArgb(28, 32, 48) });
         layout.Controls.Add(_instructions);
         layout.Controls.Add(_connection);
         _targets.Columns.Add("快捷键", 160); _targets.Columns.Add("接收目标", 170); _targets.Columns.Add("默认网址", 300);

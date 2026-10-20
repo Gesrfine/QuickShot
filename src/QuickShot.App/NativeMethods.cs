@@ -25,11 +25,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumWindows(WindowEnumerator callback, nint parameter);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(nint window);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(nint window);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsHungAppWindow(nint window);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindowAsync(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool BringWindowToTop(nint window);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool AttachThreadInput(uint from, uint to, [MarshalAs(UnmanagedType.Bool)] bool attach);
-    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(nint window, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint window, StringBuilder text, int max);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] input, int size);
@@ -84,7 +83,7 @@ internal static class NativeMethods
     internal static bool TryActivateEdgeWindow(string token)
     {
         if (string.IsNullOrEmpty(token)) return false;
-        if (IsExpectedEdgeForeground(token)) return true;
+        if (IsExpectedEdgeForeground(token)) return ForegroundVisibility.EnsureVisible(GetForegroundWindow());
         var matches = new List<nint>();
         EnumWindows((window, _) =>
         {
@@ -99,24 +98,20 @@ internal static class NativeMethods
         }, 0);
         if (matches.Count != 1) return false;
         var target = matches[0];
-        if (IsIconic(target)) ShowWindow(target, 9);
-        SetForegroundWindow(target);
-        var thread = GetCurrentThreadId();
-        var attached = new List<uint>();
-        void Attach(uint other)
-        {
-            if (other != 0 && other != thread && !attached.Contains(other) && AttachThreadInput(thread, other, true)) attached.Add(other);
-        }
-        try
-        {
-            Attach(GetWindowThreadProcessId(GetForegroundWindow(), out _));
-            Attach(GetWindowThreadProcessId(target, out _));
-            BringWindowToTop(target); SetForegroundWindow(target);
-            if (GetForegroundWindow() != target) return false;
-            return IsExpectedEdgeForeground(token);
-        }
-        finally { foreach (var other in attached.AsEnumerable().Reverse()) AttachThreadInput(thread, other, false); }
+        return TryActivateWindow(target) && IsExpectedEdgeForeground(token) && ForegroundVisibility.EnsureVisible(target);
     }
+
+    internal static bool TryActivateWindow(nint target)
+    {
+        if (target == 0) return false;
+        if (IsHungAppWindow(target)) return false;
+        if (GetForegroundWindow() == target) return true;
+        if (IsIconic(target)) ShowWindowAsync(target, 9);
+        SetForegroundWindow(target);
+        return GetForegroundWindow() == target;
+    }
+
+    internal static void RaiseWithoutActivation(nint window) => SetWindowPos(window, new nint(-1), 0, 0, 0, 0, 0x0010 | 0x0001 | 0x0002 | 0x4000);
 
     internal static bool Paste()
     {

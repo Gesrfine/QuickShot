@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exe = process.env.QUICKSHOT_APP_PATH || path.join(root, 'artifacts/staging/QuickShot-2.0.1/QuickShot.exe');
+const exe = process.env.QUICKSHOT_APP_PATH || path.join(root, 'artifacts/staging/QuickShot-2.0.2/QuickShot.exe');
 const dataDirectory = path.join(root, 'artifacts/native-smoke', randomUUID()); await mkdir(dataDirectory, { recursive: true });
 await writeFile(path.join(dataDirectory, 'settings.json'), JSON.stringify({ ShowNotifications: false }));
 const env = { ...process.env, DOTNET_ROOT: path.join(root, '.tools/dotnet'), DOTNET_ROOT_X64: path.join(root, '.tools/dotnet'), QUICKSHOT_DATA_DIR: dataDirectory, QUICKSHOT_INSTANCE_ID: randomUUID(), QUICKSHOT_NO_REGISTER: '1' };

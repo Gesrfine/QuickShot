@@ -17,6 +17,23 @@ internal sealed class TrayApplication : ApplicationContext
     private readonly Icon _icon = DesktopUi.CreateIcon();
     private HintForm? _hint;
     private StatusNoticeForm? _notice;
+    private DeliveryActivation? _activation;
+    private DeliveryActivation Activation
+    {
+        get
+        {
+            if (_activation == null)
+            {
+                _activation = new DeliveryActivation();
+                _activation.Requested = key =>
+                {
+                    var target = _bindings.FirstOrDefault(binding => binding.Key == key);
+                    if (target != null) CommitDelivery(target, true);
+                };
+            }
+            return _activation;
+        }
+    }
     private HintForm Hint => _hint ??= new();
     private StatusNoticeForm Notice => _notice ??= new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 100 };
@@ -43,6 +60,7 @@ internal sealed class TrayApplication : ApplicationContext
         internal string Token => $"[QuickShot:{Id}]";
         internal DateTimeOffset Deadline = DateTimeOffset.UtcNow.AddSeconds(35);
         internal string Phase = "connecting";
+        internal bool BrowserOpened;
         internal DateTimeOffset ActivationDeadline;
         internal readonly CancellationTokenSource FocusCancellation = new();
         internal Task<bool>? FocusTask;
@@ -99,6 +117,11 @@ internal sealed class TrayApplication : ApplicationContext
     private void CancelForOtherInput()
     {
         if (_delivery != null) return;
+        if (_gate.Phase == CapturePhase.Armed)
+        {
+            _status = "其他按键或鼠标点击已取消本次投递。请重新复制图片。";
+            Post(() => { LocalLog.Event("capture", "cancelledByInput"); RefreshDashboard(); });
+        }
         _gate.Cancel(); _hint?.Hide();
         UpdateActivityTimer();
     }
@@ -114,11 +137,24 @@ internal sealed class TrayApplication : ApplicationContext
         if (decision == ShortcutDecision.Cancel) { CancelForOtherInput(); return false; }
         if (decision != ShortcutDecision.Match) return false;
         var target = _bindings.FirstOrDefault(t => _shortcuts.TryGetValue(t.Key, out var shortcut) && shortcut.Matches(stroke.VirtualKey, stroke.Modifiers));
-        if (target == null || !_gate.TryConsume(NativeMethods.GetClipboardSequenceNumber(), DateTimeOffset.UtcNow)) { UpdateActivityTimer(); return false; }
+        if (target == null) return false;
+        if (_activation?.ExpectHotkey(_shortcuts[target.Key]) == true) return false;
+        return CommitDelivery(target, false);
+    }
+
+    private bool CommitDelivery(TargetBinding target, bool systemHotkey)
+    {
+        if (_paused || _delivery != null || !_gate.TryConsume(NativeMethods.GetClipboardSequenceNumber(), DateTimeOffset.UtcNow)) { UpdateActivityTimer(); return false; }
         var sequence = _gate.ImageSequence;
         _hint?.Hide();
         var delivery = new Delivery(target, sequence); _delivery = delivery; UpdateActivityTimer();
-        Post(() => StartDelivery(delivery));
+        if (systemHotkey) Activation.BeginDelivery(target.Name, _settings.ShowNotifications);
+        Post(() =>
+        {
+            if (_delivery != delivery) return;
+            if (!systemHotkey) Activation.BeginDelivery(target.Name, _settings.ShowNotifications);
+            StartDelivery(delivery);
+        });
         return true;
     }
 
@@ -133,6 +169,7 @@ internal sealed class TrayApplication : ApplicationContext
     {
         if (sequence == _lastClipboardSequence) return;
         _lastClipboardSequence = sequence;
+        _activation?.ClearPending();
         if (_paused) { _gate.Initialize(sequence); return; }
         if (_delivery != null)
         {
@@ -144,6 +181,7 @@ internal sealed class TrayApplication : ApplicationContext
         var now = DateTimeOffset.UtcNow;
         if (_gate.ClipboardChanged(sequence, containsImage, now))
         {
+            LocalLog.Event("capture", $"imageReady; targets={_bindings.Count}; notifications={_settings.ShowNotifications}");
             if (_bindings.Count == 0) { _gate.Cancel(); Notify("请先在 Edge 扩展中绑定一个接收目标。"); }
             else
             {
@@ -155,6 +193,12 @@ internal sealed class TrayApplication : ApplicationContext
                     Notify("无法监听投递快捷键，请重启程序后重试。");
                 }
                 RefreshHint();
+                if (_gate.Phase == CapturePhase.Armed)
+                {
+                    _status = "图片已就绪，10 秒内按目标快捷键投递；其他按键或鼠标点击会取消。";
+                    LocalLog.Event("capture", $"armed; hintVisible={_hint?.Visible == true}");
+                    RefreshDashboard();
+                }
             }
         }
         if (_gate.Phase != CapturePhase.Armed) _hint?.Hide();
@@ -213,6 +257,14 @@ internal sealed class TrayApplication : ApplicationContext
             if (_delivery == null || message["requestId"]?.GetValue<string>() != _delivery.Id) return;
             switch (type)
             {
+                case "openDefault" when _delivery.Phase == "preparing" && !_delivery.BrowserOpened:
+                    _delivery.BrowserOpened = true;
+                    if (NativeMethods.GetClipboardSequenceNumber() != _delivery.Sequence || !NativeMethods.ClipboardHasImage)
+                    { Fail("剪贴板已变化，请重新复制图片。"); break; }
+                    try { DesktopUi.OpenEdge(_delivery.Target.Url); }
+                    catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+                    { Fail("无法启动 Edge：" + error.Message); }
+                    break;
                 case "focusPrepared" when _delivery.Phase == "preparing":
                     _delivery.Phase = "waitingForActivation";
                     _delivery.ActivationDeadline = DateTimeOffset.UtcNow.AddSeconds(4);
@@ -229,6 +281,7 @@ internal sealed class TrayApplication : ApplicationContext
                     var observed = message["pasteObserved"]?.GetValue<bool>() == true;
                     _delivery.FocusCancellation.Dispose();
                     _delivery = null;
+                    _activation?.Hide();
                     UpdateActivityTimer();
                     Notify(observed ? "已执行粘贴，请在网页确认附件后手动发送。" : "已发出粘贴，但网页未确认接收。请检查附件，避免重复添加。");
                     break;
@@ -251,6 +304,8 @@ internal sealed class TrayApplication : ApplicationContext
         { Fail("剪贴板发生变化，本次未粘贴。请重新复制图片。"); return; }
         if (!NativeMethods.IsExpectedEdgeForeground(delivery.Token))
         { Fail("目标 Edge 标签页没有获得焦点，本次未粘贴。"); return; }
+        if (!ForegroundVisibility.IsUnobscured(NativeMethods.GetForegroundWindow()))
+        { Fail("目标 Edge 页面被其他窗口遮挡，本次未粘贴。请切到目标网页后重新复制图片。"); return; }
         delivery.Phase = "pasting";
         if (!NativeMethods.Paste()) { Fail("Windows 未接受粘贴操作。请确认 Edge 没有以管理员身份运行。"); return; }
         Send(new JsonObject { ["type"] = "pasteDispatched", ["requestId"] = delivery.Id });
@@ -290,9 +345,24 @@ internal sealed class TrayApplication : ApplicationContext
     {
         try
         {
+            var wasArmed = _gate.Phase == CapturePhase.Armed;
             _gate.Expire(DateTimeOffset.UtcNow);
+            if (wasArmed && _gate.Phase == CapturePhase.Idle && _delivery == null)
+            {
+                _status = "图片投递资格已过期，请重新复制图片。";
+                LocalLog.Event("capture", "expired");
+                RefreshDashboard();
+            }
             RefreshHint();
-            if (_delivery == null) return;
+            if (_delivery == null)
+            {
+                if (_gate.Phase == CapturePhase.Armed && _activation?.TakePendingFallback(DateTimeOffset.UtcNow) is { } key)
+                {
+                    var target = _bindings.FirstOrDefault(binding => binding.Key == key);
+                    if (target != null) CommitDelivery(target, false);
+                }
+                return;
+            }
             if (_delivery.Phase != "pasting" && NativeMethods.GetClipboardSequenceNumber() != _delivery.Sequence) { Fail("剪贴板已变化，本次投递停止。"); return; }
             if (DateTimeOffset.UtcNow >= _delivery.Deadline) { Fail("等待网页超时。请确认扩展已安装、账号已登录，然后重新截图。"); return; }
             if (_delivery.Phase == "waitingForKeys" && _keyboard.AllDeliveryKeysReleased)
@@ -302,11 +372,14 @@ internal sealed class TrayApplication : ApplicationContext
             }
             else if (_delivery.Phase == "waitingForActivation" && _keyboard.AllDeliveryKeysReleased)
             {
-                if (NativeMethods.TryActivateEdgeWindow(_delivery.Token) || DateTimeOffset.UtcNow >= _delivery.ActivationDeadline)
+                if (NativeMethods.TryActivateEdgeWindow(_delivery.Token))
                 {
+                    _activation?.Hide();
                     _delivery.Phase = "verifying";
                     Send(new JsonObject { ["type"] = "verifyFocus", ["requestId"] = _delivery.Id });
                 }
+                else if (DateTimeOffset.UtcNow >= _delivery.ActivationDeadline)
+                    Fail("Windows 未允许显示目标 Edge 窗口，本次未粘贴。请切出游戏独占全屏，或检查游戏与 Edge 的管理员权限后重新复制图片。");
             }
             else if (_delivery.Phase == "focusingContent")
             {
@@ -329,6 +402,8 @@ internal sealed class TrayApplication : ApplicationContext
     private void UpdateActivityTimer()
     {
         if (_disposed) return;
+        if (_gate.Phase == CapturePhase.Armed && _delivery == null && !_paused) Activation.UpdateShortcuts(_shortcutList);
+        else _activation?.UpdateShortcuts(Array.Empty<Shortcut>());
         if (_gate.Phase != CapturePhase.Armed) _hint?.Hide();
         _keyboard.KeyInputEnabled = !_paused && _gate.Phase != CapturePhase.Idle && _delivery == null;
         _keyboard.Enabled = _gate.Phase == CapturePhase.Armed || _delivery != null;
@@ -377,6 +452,7 @@ internal sealed class TrayApplication : ApplicationContext
         if (_delivery == null) { UpdateActivityTimer(); return; }
         _delivery.FocusCancellation.Cancel(); _delivery.FocusCancellation.Dispose();
         Send(new JsonObject { ["type"] = "cancel", ["requestId"] = _delivery.Id }); _delivery = null;
+        _activation?.Hide();
         UpdateActivityTimer();
         if (refresh) RefreshDashboard();
     }
@@ -410,6 +486,7 @@ internal sealed class TrayApplication : ApplicationContext
         {
             settings.Save();
             _settings = settings;
+            if (_activation is { Visible: true }) _activation.Opacity = settings.ShowNotifications ? 1 : 0;
             if (!_settings.ShowNotifications) { _hint?.Hide(); _notice?.Hide(); }
             _status = settings.ShowNotifications ? "已开启右下角提示。" : "已隐藏右下角提示，快捷投递照常运行。结果可在此窗口查看。";
             RefreshHint(); UpdateActivityTimer(); RefreshDashboard();
@@ -467,7 +544,8 @@ internal sealed class TrayApplication : ApplicationContext
         if (disposing && !_disposed)
         {
             _gate.Cancel(); CancelDelivery(false); _disposed = true; _timer.Stop(); _timer.Dispose(); _keyboard.Dispose(); _mouse.Dispose(); _clipboard.Dispose();
-            _server.Dispose(); _tray.Visible = false; _tray.Dispose(); _icon.Dispose(); _hint?.Dispose(); _notice?.Dispose(); _dashboard?.Dispose(); _dispatcher.Dispose();
+            ForegroundVisibility.Restore();
+            _server.Dispose(); _tray.Visible = false; _tray.Dispose(); _icon.Dispose(); _hint?.Dispose(); _notice?.Dispose(); _activation?.Dispose(); _dashboard?.Dispose(); _dispatcher.Dispose();
         }
         base.Dispose(disposing);
     }

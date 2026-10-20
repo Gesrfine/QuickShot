@@ -17,15 +17,19 @@ foreach ($project in $Suites) {
     & $dotnet run --project ('tests/QuickShot.' + $project + '.Tests') -c Release @restoreOptions -- (Join-Path $repoRoot ('artifacts\2.0-' + $project)) --background
     if ($LASTEXITCODE -ne 0) { throw ($project + ' checks failed.') }
 }
+if ($Browser -or $NativeFocus) {
+    & $dotnet build tests/QuickShot.App.Tests -c Release @restoreOptions
+    if ($LASTEXITCODE -ne 0) { throw 'Browser helper build failed.' }
+}
 if ($Browser) {
     & node tests/browser.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Browser checks failed.' }
     & node tests/cold-start.mjs --late-navigation
     if ($LASTEXITCODE -ne 0) { throw 'Cold-start checks failed.' }
+    & node tests/window-placement.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Window placement checks failed.' }
 }
 if ($NativeFocus) {
-    & $dotnet build tests/QuickShot.App.Tests -c Release @restoreOptions
-    if ($LASTEXITCODE -ne 0) { throw 'Focus helper build failed.' }
     & node tests/native-focus.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Native focus checks failed.' }
 }

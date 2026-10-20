@@ -78,6 +78,10 @@ try {
   await cdp.eval(`Object.defineProperty(document,'readyState',{configurable:true,get:()=> 'loading'})`);
   check((await cdp.eval(`callQuickShot({type:'prepare',requestId:'${id}',locator:${JSON.stringify(locator)}})`)).ok, false, 'loading document cannot publish an activation marker');
   await cdp.eval(`delete document.readyState`);
+  await cdp.eval(`Object.defineProperty(document,'readyState',{configurable:true,get:()=> 'interactive'})`);
+  check((await cdp.eval(`callQuickShot({type:'prepare',requestId:'${id}',locator:${JSON.stringify(locator)}})`)).ok, true, 'ready input can prepare before unrelated resources complete');
+  await cdp.eval(`delete document.readyState`);
+  await cdp.eval(`callQuickShot({type:'cancel',requestId:'${id}'})`);
   await cdp.eval(`document.querySelector('#chat').setSelectionRange(0,3)`);
   check((await cdp.eval(`callQuickShot({type:'prepare',requestId:'${id}',locator:${JSON.stringify(locator)}})`)).ok, true, 'real DOM focus preparation');
   check(await cdp.eval(`document.querySelector('#chat').value`), '保留这段草稿', 'existing draft is untouched');
@@ -90,6 +94,9 @@ try {
   await cdp.eval(`document.head.replaceWith(document.head.cloneNode(true));document.title='替换后的最新标题'`);
   check(await cdp.eval(`document.title`), `[QuickShot:${id}] 替换后的最新标题`, 'replacing the document head reconnects the scoped title observer');
   check((await cdp.eval(`callQuickShot({type:'prepare',requestId:'${id}',locator:${JSON.stringify(locator)}})`)).ok, true, 'repeated preparation keeps the same live document');
+  await cdp.eval(`{const old=document.querySelector('#chat'),next=old.cloneNode(true);next.value=old.value;old.replaceWith(next);}`);
+  check((await cdp.eval(`callQuickShot({type:'verifyFocus',requestId:'${id}'})`)).needsEditor, true, 'disconnected bound editor requests recovery instead of authorizing paste');
+  check((await cdp.eval(`callQuickShot({type:'prepare',requestId:'${id}',locator:${JSON.stringify(locator)}})`)).ok, true, 'the same unique locator can prepare the replacement editor');
   check(await cdp.eval(`document.title.split('[QuickShot:').length-1`), 1, 'repeated preparation never duplicates the title marker');
   await cdp.eval(`document.querySelector('#other').focus()`);
   check((await cdp.eval(`callQuickShot({type:'verifyFocus',requestId:'${id}'})`)).ok, true, 'activation re-focuses the configured input');

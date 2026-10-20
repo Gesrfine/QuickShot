@@ -77,7 +77,7 @@ async function harness(savedBindings = [binding()], tabOverrides = [], schemaVer
     tabs: {
       get: async id => { if (!tabs.has(id)) throw new Error('missing tab'); return structuredClone(tabs.get(id)); },
       query: async () => [...tabs.values()].map(tab => structuredClone(tab)),
-      create: async ({ url }) => { const tab = { id: nextTab++, url, windowId: 1, status: 'complete', active: true, incognito: false }; tabs.set(tab.id, tab); trace.push('create:' + url); return structuredClone(tab); },
+      create: async ({ url, windowId = 1 }) => { const tab = { id: nextTab++, url, windowId, status: 'complete', active: true, incognito: false }; tabs.set(tab.id, tab); trace.push('create:' + url); return structuredClone(tab); },
       update: async (id, update) => { trace.push('activateTab:' + id); return Object.assign(tabs.get(id), update); },
       remove: async id => { tabs.delete(id); trace.push('close:' + id); tabRemoved.fire(id); },
       sendMessage: async (id, message) => {
@@ -376,22 +376,43 @@ test('no target site opens the configured default, never the last conversation',
   assert.ok(h.trace.includes('create:' + custom.url));
   assert.equal(h.content.find(message => message.type === 'prepare').id, 20);
 });
-test('connected background Edge without a normal window creates a receiving window at the configured default', async () => {
+test('connected background Edge requests the native launcher to preserve saved window placement', async () => {
   const custom = { ...binding(), url: binding().origin + '/configured-default' };
   const h = await harness([custom]); h.tabs.clear();
-  const calls = [], create = h.chrome.windows.create;
-  h.chrome.tabs.create = async options => { calls.push({ type: 'tab', ...structuredClone(options) }); throw new Error('No current window'); };
-  h.chrome.windows.create = async options => { calls.push({ type: 'window', options: structuredClone(options) }); return create(options); };
-  await prepare(h);
-  assert.deepEqual(calls, [
-    { type: 'tab', url: custom.url, active: true },
-    { type: 'window', options: { url: custom.url, type: 'normal', focused: false } }
-  ]);
-  assert.equal(h.tabs.size, 1); assert.equal(h.tabs.get(20).url, custom.url);
-  assert.equal(h.content.find(message => message.type === 'prepare').id, 20);
+  h.chrome.tabs.create = h.chrome.windows.create = async () => { throw new Error('extension must not choose default window bounds'); };
+  await h.connect(); h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: custom.id });
+  await h.wait(() => h.outgoing.some(message => message.type === 'openDefault'));
+  assert.deepEqual(h.outgoing.at(-1), { type: 'openDefault', requestId });
+  assert.equal(h.content.length, 0, 'preparation waits for the actual native-opened page');
+  h.tabs.set(30, { id: 30, windowId: 4, url: custom.url, status: 'complete', active: true, incognito: false });
+  await h.wait(() => h.outgoing.some(message => message.type === 'focusPrepared'));
+  assert.equal(h.tabs.size, 1);
+  assert.equal(h.content.find(message => message.type === 'prepare').id, 30);
   assert.equal(h.outgoing.at(-1).type, 'focusPrepared');
+  assert.equal(h.outgoing.filter(message => message.type === 'openDefault').length, 1);
   assert.equal(h.trace.some(item => item.startsWith('close:')), false);
   assert.equal(h.outgoing.some(message => message.type === 'pasteNow'), false, 'window creation still waits for native focus verification');
+});
+test('cancelling while the native launcher opens a window cannot prepare or authorize its late page', async () => {
+  const h = await harness(); h.tabs.clear(); await h.connect();
+  h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
+  await h.wait(() => h.outgoing.some(message => message.type === 'openDefault'));
+  h.port.onMessage.fire({ type: 'cancel', requestId });
+  h.tabs.set(30, { id: 30, windowId: 4, url: binding().url, status: 'complete', active: true });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(h.content.length, 0);
+  assert.equal(h.outgoing.some(message => ['focusPrepared', 'pasteNow'].includes(message.type)), false);
+});
+test('native window opening still rejects multiple same-site pages and preserves unrelated app windows', async () => {
+  const h = await harness(); h.tabs.get(7).url = 'https://other.test/'; h.windowTypes.set(1, 'app');
+  await h.connect(); h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
+  await h.wait(() => h.outgoing.some(message => message.type === 'openDefault'));
+  for (const id of [30, 31]) h.tabs.set(id, { id, windowId: 4, url: binding().url, status: 'complete', active: true });
+  await h.wait(() => h.outgoing.some(message => message.type === 'deliveryError'));
+  assert.match(h.outgoing.at(-1).message, /多个/);
+  assert.equal(h.content.length, 0);
+  assert.equal(h.tabs.get(7).url, 'https://other.test/');
+  assert.equal(h.trace.some(item => item.startsWith('create:') || item.startsWith('createWindow:')), false);
 });
 test('newly opened chats wait for navigation completion before preparing the editor', async () => {
   const h = await harness(); h.tabs.get(7).url = 'https://other.test/';
@@ -456,12 +477,12 @@ test('a minimized unique target is restored before its window and editor are ver
   };
   h.chrome.tabs.sendMessage = async (id, message) => { if (message.type === 'verifyFocus') h.trace.push('verifyEditor:' + id); return send(id, message); };
   await prepare(h);
-  assert.equal(state, 'minimized', 'preparation alone never restores a window');
+  assert.equal(state, 'normal', 'preparation restores the window without focusing it');
+  assert.deepEqual(updates, [{ id: 1, state: 'normal', focused: false }]);
   assert.equal(h.outgoing.some(message => message.type === 'pasteNow'), false);
-  h.trace.length = 0;
   h.port.onMessage.fire({ type: 'verifyFocus', requestId });
   await h.wait(() => h.outgoing.some(message => message.type === 'pasteNow'));
-  assert.deepEqual(updates, [{ id: 1, focused: true, state: 'normal' }]);
+  assert.deepEqual(updates, [{ id: 1, state: 'normal', focused: false }, { id: 1, focused: true }]);
   assert.ok(h.trace.indexOf('windowState:minimized') < h.trace.indexOf('restoreWindow'));
   assert.ok(h.trace.indexOf('restoreWindow') < h.trace.indexOf('activateTab:7'));
   assert.ok(h.trace.indexOf('activateTab:7') < h.trace.indexOf('windowState:normal'));
@@ -474,7 +495,8 @@ test('restoring a minimized target never bypasses failed window or editor focus 
     const get = h.chrome.windows.get;
     h.chrome.windows.get = async id => ({ ...await get(id), state });
     h.chrome.windows.update = async (id, options) => {
-      assert.equal(id, 1); assert.deepEqual(structuredClone(options), { focused: true, state: 'normal' });
+      assert.equal(id, 1);
+      assert.equal(typeof options.focused, 'boolean');
       restored = true; if (failure !== 'stillMinimized') state = 'normal';
     };
     if (failure === 'windowUnfocused') h.setWindowFocus(false);
@@ -501,7 +523,10 @@ test('a second target tab appearing during delivery prevents activation and past
   assert.equal(h.trace.some(item => item.startsWith('activate')), false);
 });
 test('cold-start navigation after focus preparation waits and prepares the final document before paste', async () => {
-  const h = await harness(); h.tabs.clear(); await prepare(h);
+  const h = await harness(); h.tabs.clear();
+  h.tabs.set(20, { id: 20, windowId: 1, url: h.chrome.runtime.getURL('connect.html'), status: 'complete', active: true });
+  await h.ui({ type: 'connect' }, { id: h.chrome.runtime.id, url: h.chrome.runtime.getURL('connect.html'), tab: { id: 20 } });
+  await prepare(h);
   const tab = h.tabs.get(20), finalUrl = binding().origin + '/chat/created';
   tab.pendingUrl = finalUrl; tab.status = 'loading';
   h.port.onMessage.fire({ type: 'verifyFocus', requestId });
@@ -652,4 +677,69 @@ test('an older native protocol never marks the 2.0 extension ready', async () =>
   h.port.onMessage.fire({ type: 'helloAck', version: 2 });
   await h.wait(() => h.session.connection.state === 'error');
   assert.ok(!h.outgoing.some(message => message.type === 'ready'));
+});
+
+test('a ready editor need not wait for unrelated page resources', async () => {
+  const h = await harness(); h.tabs.get(7).status = 'loading';
+  await prepare(h);
+  assert.equal(h.outgoing.at(-1).type, 'focusPrepared');
+  h.port.onMessage.fire({ type: 'verifyFocus', requestId });
+  await h.wait(() => h.outgoing.some(message => message.type === 'pasteNow'));
+});
+
+test('missing target restores and uses an explicit ordinary window', async () => {
+  const h = await harness(); h.tabs.get(7).url = 'https://other.test/';
+  h.chrome.windows.getAll = async () => [{ id: 42, type: 'normal', state: 'minimized', focused: false }];
+  const actions = [], create = h.chrome.tabs.create;
+  h.chrome.windows.update = async (id, options) => { actions.push({ kind: 'window', id, ...structuredClone(options) }); };
+  h.chrome.tabs.create = async options => { actions.push({ kind: 'tab', ...structuredClone(options) }); return create(options); };
+  await prepare(h);
+  assert.deepEqual(actions.slice(0, 2), [
+    { kind: 'window', id: 42, state: 'normal', focused: false },
+    { kind: 'tab', windowId: 42, url: binding().url, active: true }
+  ]);
+  assert.equal(h.outgoing.at(-1).type, 'focusPrepared');
+});
+
+test('one app conversation beside an unrelated normal browser reuses the app', async () => {
+  const h = await harness(); h.tabs.get(7).url = 'https://other.test/';
+  h.tabs.set(8, { id: 8, windowId: 2, url: binding().url, active: true, status: 'complete' }); h.windowTypes.set(2, 'app');
+  await prepare(h);
+  assert.equal(h.content.find(message => message.type === 'prepare').id, 8);
+  assert.equal(h.trace.some(item => item.startsWith('create:')), false);
+});
+
+test('a blocked old renderer cancellation does not block another delivery', async () => {
+  const h = await harness(); await prepare(h);
+  const send = h.chrome.tabs.sendMessage;
+  h.chrome.tabs.sendMessage = (id, message) => message.type === 'cancel' ? new Promise(() => {}) : send(id, message);
+  h.outgoing.length = 0;
+  h.port.onMessage.fire({ type: 'prepare', requestId, bindingId: binding().id });
+  await h.wait(() => h.outgoing.some(message => message.type === 'focusPrepared'));
+});
+
+test('a lost renderer window response cannot create an extra conversation', async () => {
+  const h = await harness(); h.chrome.windows.get = () => new Promise(() => {});
+  await prepare(h);
+  assert.match(h.outgoing.at(-1).message, /响应超时/);
+  assert.equal(h.trace.some(item => item.startsWith('create:')), false);
+});
+
+test('only before first authorization can a disconnected editor be prepared again', async () => {
+  for (const alreadyAuthorized of [false, true]) {
+    const h = await harness(); await prepare(h);
+    if (alreadyAuthorized) {
+      h.port.onMessage.fire({ type: 'verifyFocus', requestId });
+      await h.wait(() => h.outgoing.some(message => message.type === 'pasteNow'));
+    }
+    const send = h.chrome.tabs.sendMessage; let disconnected = true;
+    h.chrome.tabs.sendMessage = async (id, message) => {
+      if (message.type === 'verifyFocus' && disconnected) { disconnected = false; return { ok: false, needsEditor: true }; }
+      return send(id, message);
+    };
+    h.port.onMessage.fire({ type: 'verifyFocus', requestId });
+    await h.wait(() => alreadyAuthorized ? h.outgoing.some(message => message.type === 'deliveryError') : h.outgoing.some(message => message.type === 'pasteNow'));
+    assert.equal(h.content.filter(message => message.type === 'prepare').length, alreadyAuthorized ? 1 : 2);
+    assert.equal(h.outgoing.filter(message => message.type === 'pasteNow').length, 1);
+  }
 });

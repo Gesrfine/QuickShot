@@ -44,10 +44,10 @@ internal static class Program
         ((CaptureGate)Field(context, "_gate")!).Initialize(unchecked(sequence - 1));
         Call(context, "ProcessClipboard", sequence, true);
     }
-    private static object AttachDelivery(object context, string phase)
+    private static object AttachDelivery(object context, string phase, uint? sequence = null)
     {
         var type = context.GetType().GetNestedType("Delivery", BindingFlags.NonPublic)!;
-        var delivery = Activator.CreateInstance(type, Instance, null, [new TargetBinding(Guid.NewGuid().ToString(), "C", "测试", "https://example.com/"), Sequence()], null)!;
+        var delivery = Activator.CreateInstance(type, Instance, null, [new TargetBinding(Guid.NewGuid().ToString(), "C", "测试", "https://example.com/"), sequence ?? Sequence()], null)!;
         type.GetField("Phase", Instance)!.SetValue(delivery, phase);
         context.GetType().GetField("_delivery", Instance)!.SetValue(context, delivery);
         Call(context, "UpdateActivityTimer"); return delivery;
@@ -63,7 +63,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         try
         {
-            CheckSettings(); CheckKeyboard(); CheckUniversalClipboard(); CheckCommittedDelivery(); CheckHiddenSettings();
+            CheckSettings(); CheckKeyboard(); CheckUniversalClipboard(); CheckHotkeys(); CheckCommittedDelivery(); CheckBrowserLaunchGuards(); CheckHiddenSettings();
             File.WriteAllText(Path.Combine(_output, "result.json"), JsonSerializer.Serialize(new { passed = true, checks = Checks }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine("Runtime checks passed: " + Checks.Count); return 0;
         }
@@ -163,6 +163,7 @@ internal static class Program
         Check(gate.Phase == CapturePhase.Idle, "startup clipboard and duplicate callbacks never arm");
         Arm(context);
         Check(gate.Phase == CapturePhase.Armed && Property<bool>(keyboard, "Enabled") && timer.Enabled, "any source's new image enables the ten-second delivery window");
+        Check(((string)Field(context, "_status")!).Contains("图片已就绪"), "received image status is available even when popup notifications are hidden");
         Check(!((Form)Field(context, "_hint")!).Visible, "hidden notifications do not prevent arming");
         var deadline = gate.Deadline; Call(context, "ProcessClipboard", Sequence(), true);
         Check(gate.Deadline == deadline, "duplicate image events do not reset the countdown");
@@ -170,21 +171,92 @@ internal static class Program
         Check(gate.Phase == CapturePhase.Armed, "releasing the copy shortcut preserves eligibility");
         Call(context, "ConsumeKey", new KeyStroke('A', ShortcutModifiers.None, true));
         Check(gate.Phase == CapturePhase.Idle && !timer.Enabled && !Property<bool>(keyboard, "Enabled"), "ordinary input cancels and immediately stops idle monitoring");
+        Check(((string)Field(context, "_status")!).Contains("取消"), "input cancellation is visible in the main window instead of looking like a missing clipboard event");
         Arm(context); Call(context, "ConsumeKey", new KeyStroke(0x1B, ShortcutModifiers.None, true));
         Check(gate.Phase == CapturePhase.Idle, "Escape cancels before delivery");
         Arm(context); ((Action)Property<Delegate>(Field(context, "_mouse")!, "Clicked"))();
         Check(gate.Phase == CapturePhase.Idle, "mouse clicks cancel before delivery");
         Arm(context); Set(gate, "Deadline", DateTimeOffset.UtcNow.AddMilliseconds(-1)); Call(context, "Tick");
         Check(gate.Phase == CapturePhase.Idle && !timer.Enabled && !Property<bool>(keyboard, "Enabled"), "timeout hides the hint and stops monitoring");
+        Check(((string)Field(context, "_status")!).Contains("过期"), "expiration is reported distinctly from missing clipboard events");
         Arm(context); Call(context, "ProcessClipboard", unchecked(Sequence() + 1), false);
         Check(gate.Phase == CapturePhase.Idle, "text or file replacement cancels the armed image");
         Arm(context);
-        Check((bool)Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true))!, "configured target key commits delivery");
+        var suppressed = (bool)Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true))!;
+        if (!suppressed)
+        {
+            Check(Field(context, "_delivery") == null, "registered shortcut waits for Windows hotkey dispatch");
+            Call(Field(context, "_activation")!, "ReceiveHotkey", 1);
+        }
         var delivery = Field(context, "_delivery");
         Check(delivery != null && gate.Phase == CapturePhase.Idle, "eligibility is consumed when delivery is committed");
         Check(!(bool)Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true))! && ReferenceEquals(delivery, Field(context, "_delivery")), "repeated shortcut cannot create a second delivery");
         Call(context, "CancelDelivery", false);
     }
+
+    private static void CheckHotkeys()
+    {
+        using var context = Context();
+        Check(Field(context, "_activation") == null, "idle state has no activation window or hotkey registrations");
+        Arm(context);
+        var activation = Field(context, "_activation")!;
+        var registrations = (System.Collections.IDictionary)Field(activation, "_registered")!;
+        Check(registrations.Count == 1, "eligible image temporarily registers its target shortcut");
+        Call(activation, "ReceiveHotkey", 1);
+        Check(Field(context, "_delivery") == null, "hotkey messages without a fresh physical match cannot commit");
+        Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true, true));
+        Call(activation, "ReceiveHotkey", 1);
+        Check(Field(context, "_delivery") == null, "held or repeated target keys cannot authorize a hotkey message");
+        Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true));
+        Call(context, "CancelForOtherInput");
+        Call(activation, "ReceiveHotkey", 1);
+        Check(registrations.Count == 0 && Field(context, "_delivery") == null, "cancellation unregisters shortcuts and rejects queued hotkey messages");
+        Arm(context);
+        Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true));
+        Call(activation, "ReceiveHotkey", 1);
+        Check(Field(context, "_delivery") != null && registrations.Count == 0, "accepted hotkey consumes eligibility and releases all system shortcuts");
+        Call(context, "TryApplySettings", Settings(true));
+        Check(((Form)activation).Opacity == 1, "enabling notifications reveals the current transition status");
+        Call(context, "TryApplySettings", Settings(false));
+        Check(((Form)activation).Visible && ((Form)activation).Opacity == 0, "hiding notifications removes the transition text while retaining the foreground handoff");
+        Call(context, "CancelDelivery", false);
+        Check(!((Form)activation).Visible, "canceled delivery releases its foreground transition window");
+        Arm(context);
+        Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true));
+        Check(Call(activation, "TakePendingFallback", DateTimeOffset.UtcNow) == null, "normal system hotkey dispatch has time to acquire foreground");
+        activation.GetType().GetField("_pendingAt", Instance)!.SetValue(activation, DateTimeOffset.UtcNow.AddSeconds(-1));
+        Call(context, "Tick");
+        var fallback = Field(context, "_delivery");
+        Check(fallback != null, "intercepted system hotkey falls back to the validated physical match");
+        Call(activation, "ReceiveHotkey", 1);
+        Check(ReferenceEquals(fallback, Field(context, "_delivery")), "late system hotkey cannot duplicate fallback delivery");
+        Call(context, "CancelDelivery", false);
+        Arm(context);
+        Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true));
+        Call(context, "ProcessClipboard", unchecked(Sequence() + 1), true);
+        Call(activation, "ReceiveHotkey", 1);
+        Check(Field(context, "_delivery") == null, "replacing the image invalidates a pending physical hotkey match");
+        Call(context, "CancelForOtherInput");
+        using var owner = new Control();
+        Check(RegisterHotKey(owner.Handle, 1, 0x4000, 'C'), "test owner reserves a conflicting shortcut");
+        try
+        {
+            Arm(context);
+            Check(registrations.Count == 0, "occupied system shortcut is left with its current owner");
+            Check((bool)Call(context, "ConsumeKey", new KeyStroke('C', ShortcutModifiers.None, true))! && Field(context, "_delivery") != null,
+                "occupied system shortcut retains the guarded low-level fallback");
+            Call(context, "CancelDelivery", false);
+        }
+        finally { UnregisterHotKey(owner.Handle, 1); }
+        var failed = AttachDelivery(context, "waitingForActivation");
+        failed.GetType().GetField("ActivationDeadline", Instance)!.SetValue(failed, DateTimeOffset.UtcNow.AddSeconds(-1));
+        Call(context, "Tick");
+        Check(Field(context, "_delivery") == null && ((string)Field(context, "_status")!).Contains("Windows 未允许"),
+            "activation timeout stops before browser verification or paste and reports the window failure");
+    }
+
+    [DllImport("user32.dll")] private static extern bool RegisterHotKey(nint window, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(nint window, int id);
 
     private static void CheckCommittedDelivery()
     {
@@ -213,6 +285,32 @@ internal static class Program
         AttachDelivery(context, "connecting");
         Call(context, "ProcessClipboard", unchecked(Sequence() + 1), true);
         Check(Field(context, "_delivery") == null && ((CaptureGate)Field(context, "_gate")!).Phase == CapturePhase.Idle, "clipboard change during delivery stops without automatically sending a new image");
+    }
+
+    private static void CheckBrowserLaunchGuards()
+    {
+        using var context = Context();
+        using var stream = new System.IO.Pipes.NamedPipeServerStream("quickshot-launch-test-" + Guid.NewGuid().ToString("N"));
+        var peer = Create("PipePeer", stream);
+        context.GetType().GetField("_peer", Instance)!.SetValue(context, peer);
+        foreach (var phase in new[] { "connecting", "waitingForActivation", "verifying", "pasting" })
+        {
+            var delivery = AttachDelivery(context, phase);
+            Call(context, "Receive", peer, new JsonObject { ["type"] = "openDefault", ["requestId"] = (string)Field(delivery, "Id")! });
+            Check(!(bool)Field(delivery, "BrowserOpened")!, phase + ": late window requests cannot launch Edge");
+            Call(context, "CancelDelivery", false);
+        }
+        var pending = AttachDelivery(context, "preparing");
+        Call(context, "Receive", peer, new JsonObject { ["type"] = "openDefault", ["requestId"] = Guid.NewGuid().ToString("N") });
+        Check(!(bool)Field(pending, "BrowserOpened")!, "stale delivery IDs cannot open a browser window");
+        pending.GetType().GetField("BrowserOpened", Instance)!.SetValue(pending, true);
+        Call(context, "Receive", peer, new JsonObject { ["type"] = "openDefault", ["requestId"] = (string)Field(pending, "Id")! });
+        Check(ReferenceEquals(Field(context, "_delivery"), pending), "duplicate window requests are ignored without disrupting delivery");
+        Call(context, "CancelDelivery", false);
+        var changed = AttachDelivery(context, "preparing", unchecked(Sequence() - 1));
+        Call(context, "Receive", peer, new JsonObject { ["type"] = "openDefault", ["requestId"] = (string)Field(changed, "Id")! });
+        Check(Field(context, "_delivery") == null && ((string)Field(context, "_status")!).Contains("剪贴板已变化"),
+            "a replaced clipboard stops the native launch before opening Edge");
     }
 
     private static void CheckHiddenSettings()

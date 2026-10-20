@@ -88,11 +88,11 @@
     if (document.title.startsWith(current.token + ' ')) document.title = document.title.slice(current.token.length + 1);
   }
   async function prepare(message) {
-    if (prepared?.requestId === message.requestId && prepared.url === location.href && document.readyState === 'complete' && visible(prepared.element)) {
+    if (prepared?.requestId === message.requestId && prepared.url === location.href && document.readyState !== 'loading' && visible(prepared.element)) {
       const current = prepared; maintainTitle(current); return { ok: prepared === current, url: current.url };
     }
     cleanup(); stopPicker();
-    if (document.readyState !== 'complete') return { ok: false, error: '网页仍在加载，请稍后重试。' };
+    if (document.readyState === 'loading') return { ok: false, error: '网页仍在加载，请稍后重试。' };
     const element = locate(message.locator);
     if (!element) return { ok: false, error: '找不到已绑定的聊天输入框，请确认已登录，或重新选择输入框。' };
     focusAtEnd(element);
@@ -130,6 +130,8 @@
   function verify(requestId) {
     const current = prepared;
     if (current) maintainTitle(current);
+    if (current?.requestId === requestId && location.href === current.url && !current.element.isConnected)
+      return { ok: false, needsEditor: true, error: '网页正在重建已绑定的输入框。' };
     if (current?.requestId === requestId && location.href === current.url && visible(current.element)) { window.focus(); focusAtEnd(current.element); }
     if (!current || current.requestId !== requestId || location.href !== current.url || document.activeElement !== current.element || !visible(current.element) || !document.title.startsWith(current.token + ' '))
       return { ok: false, error: '目标网页、输入框或焦点发生变化，本次未粘贴。' };

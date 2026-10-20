@@ -5,6 +5,8 @@ using System.Text;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using QuickShot.Core;
+using Shortcut = QuickShot.Core.Shortcut;
 
 internal static class Program
 {
@@ -20,18 +22,71 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--edge-launch") return LaunchOwnedEdge(args[1]);
+        if (args.Length is 3 or 4 && args[0] == "--cover")
+        {
+            ApplicationConfiguration.Initialize();
+            using var initialClaim = args.Length == 4 ? AcquireFromHotkey(int.Parse(args[3])) : null;
+            using var cover = new Form { Text = "QuickShot owned " + args[1] + " fixture", KeyPreview = true };
+            if (args[1] is "fullscreen" or "topmost")
+            {
+                cover.FormBorderStyle = FormBorderStyle.None;
+                cover.Bounds = Screen.PrimaryScreen!.Bounds;
+                cover.TopMost = args[1] == "topmost";
+            }
+            else cover.WindowState = FormWindowState.Maximized;
+            cover.Show(); cover.Activate(); Application.DoEvents();
+            Assembly.Load("QuickShot").GetType("QuickShot.App.NativeMethods", true)!.GetMethod("TryActivateWindow", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [cover.Handle]);
+            using var timer = new System.Windows.Forms.Timer { Interval = 100 };
+            var expires = DateTime.UtcNow.AddSeconds(45);
+            var returning = false;
+            timer.Tick += (_, _) =>
+            {
+                if (File.Exists(args[2] + ".release") || DateTime.UtcNow >= expires) cover.Close();
+                else
+                {
+                    if (!returning && File.Exists(args[2] + ".activate"))
+                    {
+                        returning = true;
+                        using var returnedClaim = args.Length == 4 ? AcquireFromHotkey(int.Parse(args[3])) : null;
+                        Assembly.Load("QuickShot").GetType("QuickShot.App.NativeMethods", true)!.GetMethod("TryActivateWindow", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [cover.Handle]);
+                    }
+                    File.WriteAllText(args[2], JsonSerializer.Serialize(new { foreground = GetForegroundWindow() == cover.Handle, process = Environment.ProcessId }));
+                }
+            };
+            timer.Start(); Application.Run(cover); return 0;
+        }
+        if (args.Length == 2 && args[0] == "--unresponsive")
+        {
+            ApplicationConfiguration.Initialize();
+            using var blocked = new Form { Text = "QuickShot owned unresponsive fixture", ShowInTaskbar = false };
+            blocked.Show(); Application.DoEvents();
+            File.WriteAllText(args[1], blocked.Handle.ToString());
+            Thread.Sleep(10000);
+            return 0;
+        }
+        if (args.Length == 3 && args[0] == "--activation-bound")
+        {
+            var activationMethods = Assembly.Load("QuickShot").GetType("QuickShot.App.NativeMethods", true)!;
+            var watch = Stopwatch.StartNew();
+            var activationResult = (bool)activationMethods.GetMethod("TryActivateWindow", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [(nint)long.Parse(args[1])])!;
+            File.WriteAllText(args[2], JsonSerializer.Serialize(new { activated = activationResult, elapsedMilliseconds = watch.ElapsedMilliseconds }));
+            return watch.ElapsedMilliseconds < 800 ? 0 : 1;
+        }
         if (args.Length == 2 && args[0] == "--installer-ui-check")
         {
             ApplicationConfiguration.Initialize();
             return CheckInstallerUi(args[1]);
         }
-        if (args.Length != 2 || !args[0].StartsWith("[QuickShot:", StringComparison.Ordinal)) return 2;
+        if (args.Length is < 2 or > 3 || !args[0].StartsWith("[QuickShot:", StringComparison.Ordinal)) return 2;
         ApplicationConfiguration.Initialize();
         using var dispatcher = new Control(); _ = dispatcher.Handle;
         Application.DoEvents();
         var methods = Assembly.Load("QuickShot").GetType("QuickShot.App.NativeMethods", throwOnError: true)!;
         var activate = methods.GetMethod("TryActivateEdgeWindow", BindingFlags.Static | BindingFlags.NonPublic)!;
         var foreground = methods.GetMethod("IsExpectedEdgeForeground", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var visibility = Assembly.Load("QuickShot").GetType("QuickShot.App.ForegroundVisibility", true)!;
+        using var activation = args.Length == 3 ? AcquireFromHotkey(int.Parse(args[2])) : null;
         var activated = false;
         var contentDeadline = DateTime.UtcNow.AddSeconds(4);
         while (!activated && DateTime.UtcNow < contentDeadline)
@@ -39,18 +94,48 @@ internal static class Program
             activated = (bool)activate.Invoke(null, [args[0]])!;
             if (!activated) { Application.DoEvents(); Thread.Sleep(100); }
         }
+        if (activated) activation?.Hide();
         var contentFocus = Assembly.Load("QuickShot").GetType("QuickShot.App.BrowserFocus", throwOnError: true)!.GetMethod("TryFocusContent", BindingFlags.Static | BindingFlags.NonPublic)!;
         var expected = (bool)foreground.Invoke(null, [args[0]])!;
+        var targetWindow = GetForegroundWindow();
         var children = new List<object>();
         EnumChildWindows(GetForegroundWindow(), (window, _) => { children.Add(new { name = Class(window), visible = IsWindowVisible(window) }); return true; }, 0);
         var gui = new GuiInfo { Size = (uint)Marshal.SizeOf<GuiInfo>() }; GetGUIThreadInfo(0, ref gui);
-        File.WriteAllText(args[1], JsonSerializer.Serialize(new { activated, expected, children, focusedClass = Class(gui.Focus), gui.Flags }));
+        var unobscured = (bool)visibility.GetMethod("IsUnobscured", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [GetForegroundWindow()])!;
+        GetWindowRect(targetWindow, out var targetBounds);
+        var centerRoot = GetAncestor(WindowFromPoint(new Point(targetBounds.Left + (targetBounds.Right - targetBounds.Left) / 2, targetBounds.Top + (targetBounds.Bottom - targetBounds.Top) / 2)), 2);
+        GetWindowThreadProcessId(centerRoot, out var centerProcess);
+        GetWindowThreadProcessId(targetWindow, out var targetProcess);
+        var centerTitle = new StringBuilder(2048);
+        if (centerProcess == targetProcess) GetWindowText(centerRoot, centerTitle, centerTitle.Capacity);
+        File.WriteAllText(args[1], JsonSerializer.Serialize(new
+        {
+            activated, expected, unobscured, children, focusedClass = Class(gui.Focus), gui.Flags,
+            targetWindow = targetWindow.ToString(), centerRoot = centerRoot.ToString(), centerProcess,
+            centerClass = Class(centerRoot), helperProcess = Environment.ProcessId,
+            targetProcess, centerTitle = centerTitle.ToString(), centerOwner = GetAncestor(centerRoot, 3).ToString(), targetOwner = GetAncestor(targetWindow, 3).ToString(),
+            topmost = (GetWindowLong(targetWindow, -20) & 8) != 0,
+            leaseWindow = visibility.GetField("_window", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!.ToString(),
+            leaseHook = visibility.GetField("_hook", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!.ToString()
+        }));
         var deadline = DateTime.UtcNow.AddSeconds(10);
         var probed = false;
         var focusProbed = false;
         var activationProbed = false;
+        var restoreProbed = false;
         while (!File.Exists(args[1] + ".release") && DateTime.UtcNow < deadline)
         {
+            if (!restoreProbed && File.Exists(args[1] + ".restore-check"))
+            {
+                restoreProbed = true;
+                var restoreDeadline = DateTime.UtcNow.AddSeconds(2);
+                while ((GetWindowLong(targetWindow, -20) & 8) != 0 && DateTime.UtcNow < restoreDeadline) { Application.DoEvents(); Thread.Sleep(20); }
+                File.WriteAllText(args[1] + ".restore-result", JsonSerializer.Serialize(new
+                {
+                    restored = (GetWindowLong(targetWindow, -20) & 8) == 0,
+                    hookReleased = (nint)visibility.GetField("_hook", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)! == 0
+                }));
+            }
             if (!activationProbed && File.Exists(args[1] + ".activate"))
             {
                 activationProbed = true;
@@ -115,10 +200,11 @@ internal static class Program
                     var scan = Task.Run(() => ScanOwnedDocuments(args[0], foreground));
                     uiAutomation = scan.Wait(TimeSpan.FromMilliseconds(600)) ? scan.Result : new { timedOut = true };
                 }
+                GetWindowThreadProcessId(GetForegroundWindow(), out var finalForegroundProcess);
                 File.WriteAllText(args[1] + ".focus-result", JsonSerializer.Serialize(new
                 {
                     contentFocused, expected = stillExpected, focusCompleted, productionMilliseconds, attempts,
-                    elapsedMilliseconds = watch.ElapsedMilliseconds, errors = errors.ToArray(), uiAutomation
+                    elapsedMilliseconds = watch.ElapsedMilliseconds, errors = errors.ToArray(), uiAutomation, finalForegroundProcess
                 }));
             }
             if (!probed && File.Exists(args[1] + ".paste"))
@@ -130,8 +216,68 @@ internal static class Program
             }
             Application.DoEvents(); Thread.Sleep(20);
         }
+        visibility.GetMethod("Restore", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
         return activated && expected ? 0 : 1;
     }
+
+    private static Form AcquireFromHotkey(int coverProcess)
+    {
+        var type = Assembly.Load("QuickShot").GetType("QuickShot.App.DeliveryActivation", true)!;
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var form = (Form)Activator.CreateInstance(type, flags, null, null, null)!;
+        try
+        {
+            var shortcut = Shortcut.Parse("Ctrl+Shift+F10");
+            type.GetMethod("UpdateShortcuts", flags)!.Invoke(form, [new[] { shortcut }]);
+            if (!(bool)type.GetMethod("ExpectHotkey", flags)!.Invoke(form, [shortcut])!) throw new InvalidOperationException("Owned test hotkey registration failed.");
+            var received = false;
+            type.GetField("Requested", flags)!.SetValue(form, new Action<string>(_ =>
+            {
+                type.GetMethod("UpdateShortcuts", flags)!.Invoke(form, [Array.Empty<Shortcut>()]);
+                type.GetMethod("BeginDelivery", flags)!.Invoke(form, ["隔离测试网页", false]);
+                received = true;
+            }));
+            GetWindowThreadProcessId(GetForegroundWindow(), out var process);
+            var foregroundClass = Class(GetForegroundWindow());
+            var desktop = foregroundClass is "Progman" or "WorkerW";
+            if (process != coverProcess && !desktop) throw new InvalidOperationException($"Refusing test input outside the owned foreground fixture or empty desktop: actual={process}; approved={coverProcess}; class={foregroundClass}.");
+            INPUT Key(ushort key, bool up = false) => new() { Type = 1, Data = new InputUnion { Keyboard = new KEYBDINPUT { Key = key, Flags = up ? 2u : 0u } } };
+            INPUT[] input = [Key(0x11), Key(0x10), Key(0x79), Key(0x79, true), Key(0x10, true), Key(0x11, true)];
+            if (SendInput((uint)input.Length, input, Marshal.SizeOf<INPUT>()) != input.Length)
+            {
+                INPUT[] release = [Key(0x79, true), Key(0x10, true), Key(0x11, true)];
+                SendInput((uint)release.Length, release, Marshal.SizeOf<INPUT>());
+                throw new InvalidOperationException("Owned test hotkey input failed.");
+            }
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (!received && DateTime.UtcNow < deadline) { Application.DoEvents(); Thread.Sleep(10); }
+            if (!received || GetForegroundWindow() != form.Handle)
+            {
+                GetWindowThreadProcessId(GetForegroundWindow(), out var activeProcess);
+                throw new InvalidOperationException($"System hotkey did not acquire foreground for QuickShot: received={received}; foregroundProcess={activeProcess}; helperProcess={Environment.ProcessId}; coverProcess={coverProcess}.");
+            }
+            var wait = Stopwatch.StartNew();
+            while (wait.ElapsedMilliseconds < 600) { Application.DoEvents(); Thread.Sleep(20); }
+            return form;
+        }
+        catch { form.Dispose(); throw; }
+    }
+
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint window, out uint process);
+    [DllImport("user32.dll")] private static extern int GetWindowLong(nint window, int index);
+    [StructLayout(LayoutKind.Sequential)] private struct WindowRect { internal int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint window, out WindowRect rect);
+    [DllImport("user32.dll")] private static extern nint WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern nint GetAncestor(nint window, uint flags);
+    [DllImport("user32.dll")] private static extern uint SendInput(uint count, INPUT[] input, int size);
+    [StructLayout(LayoutKind.Sequential)] private struct INPUT { internal uint Type; internal InputUnion Data; }
+    [StructLayout(LayoutKind.Explicit)] private struct InputUnion
+    {
+        [FieldOffset(0)] internal KEYBDINPUT Keyboard;
+        [FieldOffset(0)] internal MOUSEINPUT Mouse;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct KEYBDINPUT { internal ushort Key, Scan; internal uint Flags, Time; internal nuint Extra; }
+    [StructLayout(LayoutKind.Sequential)] private struct MOUSEINPUT { internal int X, Y; internal uint Data, Flags, Time; internal nuint Extra; }
 
     private static object FocusError(string stage, Exception error) => new
     {
@@ -376,6 +522,29 @@ internal static class Program
         checks["success"] = checks.Values.All(value => value);
         File.WriteAllText(resultPath, JsonSerializer.Serialize(checks));
         return checks["success"] ? 0 : 1;
+    }
+
+    private static int LaunchOwnedEdge(string configuration)
+    {
+        var testRoot = Path.Combine(FindWorkspaceRoot(), "artifacts", "window-placement");
+        if (!IsWithinDirectory(configuration, testRoot)) return 2;
+        using var document = JsonDocument.Parse(File.ReadAllText(configuration));
+        var settings = document.RootElement;
+        var profile = settings.GetProperty("profile").GetString()!;
+        var extension = settings.GetProperty("extension").GetString()!;
+        var output = settings.GetProperty("output").GetString()!;
+        if (!IsWithinDirectory(profile, testRoot) || !IsWithinDirectory(extension, testRoot) || !IsWithinDirectory(output, testRoot)) return 2;
+        var url = settings.GetProperty("url").GetString()!;
+        var info = (ProcessStartInfo)Assembly.Load("QuickShot").GetType("QuickShot.App.DesktopUi", true)!
+            .GetMethod("CreateEdgeStartInfo", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [url])!;
+        if (settings.GetProperty("backgroundOnly").GetBoolean()) { info.ArgumentList.Clear(); info.ArgumentList.Add("--no-startup-window"); }
+        var isolation = new[] { "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+            "--disable-features=msImplicitSignin,msEdgeSignin,msEdgeSync", "--keep-alive-for-test", "--remote-debugging-port=0",
+            "--user-data-dir=" + profile, "--load-extension=" + extension, "--disable-extensions-except=" + extension };
+        for (var index = 0; index < isolation.Length; index++) info.ArgumentList.Insert(index, isolation[index]);
+        using var process = Process.Start(info)!;
+        File.WriteAllText(output, JsonSerializer.Serialize(new { processId = process.Id, arguments = info.ArgumentList }));
+        return 0;
     }
 
     private static string FindWorkspaceRoot()

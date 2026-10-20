@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QuickShot",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "将任意来源的剪贴板新图片快捷粘贴到绑定的 Edge 页面，最后由你手动发送。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2s2X5CUT73YB/D4KF+w+wny9eJW3Iens/WDXIcu3EYI7esw5C9kBwhxMz8vbXouf37kAcCZU6iM0iYrGzfghNPeg1YNnTAnH2gSEPPidjQI9Nds68ZcUPNfn+6h3huBxkuZmDg4XqE6Grjs3IJOZJkThfNWqxRhZzILMG7ioLcMPslCULYwGt1zcTl4sST4v32IJ6kRVB01st3lcgC9k7KM+SZzOhfTToOIHGjnl+FcvgijP/BDu9fZSAPwuY7IZrqFdjIACcK4CDpLLs4ElnOO5iBotFosqdCzgtWNlUWXBVXZW0GPOdYuLIRVWOvOUB01J0a7ZQ3lzWziYumVOxwIDAQAB",
   "permissions": [
